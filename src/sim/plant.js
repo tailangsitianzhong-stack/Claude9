@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { COMPANY_NAME, STRAW_COLORS, LOTS } from '../config.js';
+import { COMPANY_NAME, LOTS } from '../config.js';
 import { createShell, disposeTree } from '../scene/models.js';
 import { LAYOUT, ownedBounds, sectionCenter } from '../scene/factory.js';
 import { Lane } from './lane.js';
@@ -112,7 +112,7 @@ export class Plant {
       this._tmp.position.set(pile.userData.x + (side ? 0.47 : -0.47), 0.235 + layer * 0.17, pile.userData.z - 0.66 + col * 0.265);
       this._tmp.updateMatrix();
       pile.setMatrixAt(slot, this._tmp.matrix);
-      pile.setColorAt(slot, this._col.setHex(STRAW_COLORS[stock[i].c] ?? 0xffffff));
+      pile.setColorAt(slot, this._col.setHex(stock[i].c ?? 0xffffff));
       counts.set(key, slot + 1);
     }
     for (const [key, pile] of this.piles) {

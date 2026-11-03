@@ -1,4 +1,6 @@
-import { CONFIG, UPGRADES, EMPLOYEES, BUYERS, LAND, LOTS, LANE_STEPS, LANE_COST_GROWTH } from './config.js';
+import { CONFIG, UPGRADES, EMPLOYEES, LAND, LOTS, LANE_STEPS, LANE_COST_GROWTH, STRAW_COLORS } from './config.js';
+import { PRODUCTS, MATERIAL_RATIO } from './data/products.js';
+import { levelFromXp, levelProgress, incomeModel, autoAssign, saturationFactor, unlockedProducts } from './economy.js';
 
 const HOME_KEY = 'home:2';
 const lotOf = (id) => LOTS.find((l) => l.id === id);
@@ -13,10 +15,12 @@ export class GameState {
     this.totalEarned = 0;
     this.totalBundlesSold = 0;
     this.upgrades = Object.fromEntries(Object.keys(UPGRADES).map((k) => [k, 0]));
-    this.stock = []; // 倉庫の束: { n: 本数, c: 色番号 }
+    this.stock = []; // 倉庫の束: { n: 本数, c: 色番号, p: 製品ID }
     this.employees = EMPLOYEES.map((e) => ({ ...e }));
-    this.buyers = BUYERS.map((b) => ({ ...b, delivered: 0 }));
-    this.buyerIndex = 0;
+    this.laneProducts = { [HOME_KEY]: 0 }; // ラインごとに作る製品
+    this.defaultProduct = 0; // 新しいラインが最初に作る製品（最後に選んだもの）
+    this.sales = {}; // 製品ごとの「直近1分くらい」に売れた束の数（値崩れの計算用）
+    this._level = 1;
     this.owned = [HOME_KEY]; // 所有している区画（"土地ID:番号"）
     this.lanes = { [HOME_KEY]: LANE_STEPS.length }; // 区画ごとに置いた機械の数（3 で稼働）
     this._listeners = new Map();
@@ -33,10 +37,10 @@ export class GameState {
   }
 
   // --- 強化による値 ---
-  level(id) {
+  upgradeLevel(id) {
     return this.upgrades[id] ?? 0;
   }
-  value(id, lv = this.level(id)) {
+  value(id, lv = this.upgradeLevel(id)) {
     return UPGRADES[id].effect(lv);
   }
   get bundleInterval() {
@@ -54,10 +58,10 @@ export class GameState {
 
   upgradeCost(id) {
     const u = UPGRADES[id];
-    return Math.round(u.baseCost * Math.pow(u.growth, this.level(id)));
+    return Math.round(u.baseCost * Math.pow(u.growth, this.upgradeLevel(id)));
   }
   isMaxed(id) {
-    return this.level(id) >= UPGRADES[id].max;
+    return this.upgradeLevel(id) >= UPGRADES[id].max;
   }
   canUpgrade(id) {
     return !this.isMaxed(id) && this.money >= this.upgradeCost(id);
@@ -160,9 +164,53 @@ export class GameState {
     return { ok: true, cost, step, completed: this.isLaneActive(key) };
   }
 
+  // --- プレイヤーレベル（稼いだ純利益の合計で上がる）---
+  get level() {
+    return levelFromXp(this.totalEarned);
+  }
+  get levelInfo() {
+    return levelProgress(this.totalEarned);
+  }
+  get unlocked() {
+    return unlockedProducts(this.level);
+  }
+
+  // --- 製品 ---
+  productOf(key) {
+    return PRODUCTS[this.laneProducts[key] ?? this.defaultProduct] ?? PRODUCTS[0];
+  }
+  setLaneProduct(key, pid) {
+    const p = PRODUCTS[pid];
+    if (!p || p.unlock > this.level || !this.owns(key)) return false;
+    this.laneProducts[key] = pid;
+    this.defaultProduct = pid;
+    this.emit('products', key);
+    this.emit('change');
+    return true;
+  }
+  autoAssignAll() {
+    const a = autoAssign(this, this.level);
+    for (const [k, pid] of Object.entries(a)) this.laneProducts[k] = pid;
+    this.emit('products');
+    this.emit('change');
+    return a;
+  }
+  resolvedAssignment() {
+    const a = {};
+    for (const k of this.owned) a[k] = this.productOf(k).id;
+    return a;
+  }
+  // いま作っている製品の取引先の合計
+  get totalBuyers() {
+    const ids = new Set(this.owned.filter((k) => this.isLaneActive(k)).map((k) => this.productOf(k).id));
+    let n = 0;
+    for (const id of ids) n += PRODUCTS[id].buyers;
+    return n;
+  }
+
   // --- 在庫 ---
-  addStock(n, c) {
-    this.stock.push({ n, c });
+  addStock(n, c, p) {
+    this.stock.push({ n, c, p });
     this.emit('stock');
   }
   takeStock(max) {
@@ -173,52 +221,81 @@ export class GameState {
 
   // --- 販売 ---
   nextBuyer() {
-    const b = this.buyers[this.buyerIndex % this.buyers.length];
-    this.buyerIndex = (this.buyerIndex + 1) % this.buyers.length;
-    return b;
+    return null; // 取引先は製品ごと（deliver で集計）
   }
 
-  // おろした時点で利益を計上する
-  deliver(cargo, buyer) {
-    const straws = cargo.reduce((s, b) => s + b.n, 0);
-    const revenue = Math.round(straws * CONFIG.pricePerStraw * this.qualityMul * buyer.priceMul);
-    const cost = straws * CONFIG.materialCostPerStraw;
+  // 売れた量の記録は約1分で消えていく
+  decaySales(dt) {
+    const k = Math.exp(-dt / 60);
+    for (const id of Object.keys(this.sales)) {
+      this.sales[id] *= k;
+      if (this.sales[id] < 0.01) delete this.sales[id];
+    }
+  }
+
+  // おろした時点で利益を計上する（製品ごとに需要を超えた分は値崩れ）
+  deliver(cargo) {
+    const before = this.level;
+    const byProduct = new Map();
+    for (const b of cargo) {
+      const pid = b.p ?? 0;
+      const e = byProduct.get(pid) ?? { bundles: 0, straws: 0 };
+      e.bundles++;
+      e.straws += b.n;
+      byProduct.set(pid, e);
+    }
+    let revenue = 0;
+    let cost = 0;
+    let straws = 0;
+    let top = null;
+    let worst = 1;
+    for (const [pid, e] of byProduct) {
+      const p = PRODUCTS[pid] ?? PRODUCTS[0];
+      this.sales[pid] = (this.sales[pid] ?? 0) + e.bundles;
+      const f = saturationFactor(this.sales[pid], p.demand);
+      worst = Math.min(worst, f);
+      const r = e.straws * p.price * this.qualityMul * f;
+      revenue += r;
+      cost += e.straws * p.price * MATERIAL_RATIO;
+      straws += e.straws;
+      if (!top || r > top.r) top = { p, r };
+    }
     const net = revenue - cost;
     this.money += net;
-    this.totalEarned += net;
+    this.totalEarned += Math.max(0, net);
     this.totalBundlesSold += cargo.length;
-    buyer.delivered += cargo.length;
-    const result = { buyer, bundles: cargo.length, straws, revenue, cost, net };
+    const result = { product: top?.p, kinds: byProduct.size, bundles: cargo.length, straws, revenue, cost, net, saturation: worst };
     this.emit('delivery', result);
+    const after = this.level;
+    if (after > before) {
+      const unlocked = PRODUCTS.filter((p) => p.unlock > before && p.unlock <= after);
+      this.emit('levelup', { from: before, to: after, unlocked });
+    }
     this.emit('change');
     return result;
   }
 
-  // 1分あたりの見込み利益（生産とトラックの遅いほうで決まる）
+  // 1分あたりの見込み利益（生産・トラック・需要で決まる）
   expectedPerMinute() {
-    const t = CONFIG.truck;
-    const prodPerMin = (60 / this.bundleInterval) * this.activeLaneCount;
-    const truckPerMin = (this.truckCapacity * 60) / (t.leaveTime + t.travelTime + t.returnTime);
-    const bundlesPerMin = Math.min(prodPerMin, truckPerMin);
-    const avgMul = this.buyers.reduce((s, b) => s + b.priceMul, 0) / this.buyers.length;
-    const netPerStraw = CONFIG.pricePerStraw * this.qualityMul * avgMul - CONFIG.materialCostPerStraw;
-    return { value: bundlesPerMin * CONFIG.avgBundleSize * netPerStraw, truckLimited: truckPerMin < prodPerMin };
+    const m = incomeModel(this, this.resolvedAssignment());
+    return { value: m.perMin, truckLimited: m.truckLimited, saturated: m.saturated };
   }
 
   // --- セーブ / ロード（localStorage は使えない環境もあるので try/catch）---
   save(extra = {}) {
     const data = {
-      v: 3,
+      v: 4,
       money: this.money,
       totalEarned: this.totalEarned,
       totalBundlesSold: this.totalBundlesSold,
       upgrades: this.upgrades,
       // 配送中の荷物は倉庫に戻した扱いで保存する
       stock: [...(extra.cargo ?? []), ...this.stock],
-      buyerIndex: this.buyerIndex,
       owned: this.owned,
       lanes: this.lanes,
-      buyers: this.buyers.map((b) => ({ id: b.id, delivered: b.delivered })),
+      laneProducts: this.laneProducts,
+      defaultProduct: this.defaultProduct,
+      sales: this.sales,
       savedAt: Date.now(),
     };
     try {
@@ -234,7 +311,7 @@ export class GameState {
       const raw = localStorage.getItem(SAVE_KEY);
       if (!raw) return s;
       const d = JSON.parse(raw);
-      if (![1, 2, 3].includes(d.v)) return s;
+      if (![1, 2, 3, 4].includes(d.v)) return s;
       s.money = Number(d.money) || 0;
       s.totalEarned = Number(d.totalEarned) || 0;
       s.totalBundlesSold = Number(d.totalBundlesSold) || 0;
@@ -242,7 +319,6 @@ export class GameState {
         s.upgrades[k] = Math.min(Math.max(0, d.upgrades?.[k] | 0), UPGRADES[k].max);
       }
       s.stock = Array.isArray(d.stock) ? d.stock.slice(0, s.dockCapacity) : [];
-      s.buyerIndex = d.buyerIndex | 0;
       // v2 までは本社の区画番号(-2..2)だけを持っていた → "home:番号" に変換
       let owned = null;
       let lanes = {};
@@ -267,10 +343,20 @@ export class GameState {
         for (const k of s.owned) s.lanes[k] = Math.min(Math.max(0, lanes[k] | 0), LANE_STEPS.length);
         s.lanes[HOME_KEY] = LANE_STEPS.length;
       }
-      for (const b of d.buyers ?? []) {
-        const t = s.buyers.find((x) => x.id === b.id);
-        if (t) t.delivered = b.delivered | 0;
+      // 製品（v3 以前はすべてストレートストロー）
+      const lvl = s.level;
+      const okProduct = (pid) => Number.isInteger(pid) && PRODUCTS[pid] && PRODUCTS[pid].unlock <= lvl;
+      if (okProduct(d.defaultProduct)) s.defaultProduct = d.defaultProduct;
+      s.laneProducts = {};
+      for (const k of s.owned) {
+        const pid = d.laneProducts?.[k];
+        if (okProduct(pid)) s.laneProducts[k] = pid;
       }
+      for (const [id, v] of Object.entries(d.sales ?? {})) {
+        if (PRODUCTS[id] && Number.isFinite(v)) s.sales[id] = v;
+      }
+      // 色は v3 までは色番号、v4 からは色そのもの
+      s.stock = s.stock.map((b) => ({ n: b.n | 0 || 4, c: d.v < 4 ? (STRAW_COLORS[b.c | 0] ?? 0xffffff) : b.c | 0, p: okProduct(b.p) ? b.p : 0 }));
     } catch {
       /* 壊れたセーブは無視して新規開始 */
     }

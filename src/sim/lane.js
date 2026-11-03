@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CONFIG, STRAW_COLORS } from '../config.js';
+import { CONFIG } from '../config.js';
 import {
   setLamp,
   createExtruder,
@@ -19,7 +19,12 @@ const STRAW_LEN = 0.9;
 const strawGeo = new THREE.CylinderGeometry(0.028, 0.028, STRAW_LEN, 8).rotateZ(Math.PI / 2);
 const bandGeo = new THREE.TorusGeometry(0.078, 0.014, 6, 14).rotateY(Math.PI / 2);
 const bandMat = new THREE.MeshStandardMaterial({ color: 0xf6c445, roughness: 0.6 });
-const strawMats = STRAW_COLORS.map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.45 }));
+// 色ごとのマテリアルを使い回す（製品ごとに色が違う）
+const strawMats = new Map();
+const strawMat = (hex) => {
+  if (!strawMats.has(hex)) strawMats.set(hex, new THREE.MeshStandardMaterial({ color: hex, roughness: 0.45 }));
+  return strawMats.get(hex);
+};
 
 // 束の断面配置
 const CLUSTER = {
@@ -56,11 +61,15 @@ export class Lane {
     this.cutAcc = 0;
     this.bladeT = 1;
     this.bind = null;
-    this.colorCursor = Math.floor(Math.random() * STRAW_COLORS.length);
+    this.colorCursor = 0;
     this.status = { extruder: 'idle', cutter: 'idle', bundler: 'idle' };
     this.blockedReason = null;
 
-    this.tubeMat = new THREE.MeshStandardMaterial({ color: STRAW_COLORS[this.colorCursor], roughness: 0.4 });
+    this.tubeMat = new THREE.MeshStandardMaterial({ color: this.product.colors[0], roughness: 0.4 });
+  }
+
+  get product() {
+    return this.state.productOf(this.key);
   }
 
   get active() {
@@ -94,7 +103,7 @@ export class Lane {
     if (step === 1) {
       this.place('extruder', createExtruder(), this.L.extruderZ, animate);
       this.place('bath', createCoolingBath(2.0), this.L.bathZ, animate);
-      this.m.extruder.userData.pelletMat.color.setHex(STRAW_COLORS[this.colorCursor]);
+      this.m.extruder.userData.pelletMat.color.setHex(this.product.colors[0]);
     } else if (step === 2) {
       this.place('cutter', createCutter(), this.L.cutterZ, animate);
       const lenA = this.L.bundlerInZ - this.L.cutterOutZ;
@@ -118,8 +127,8 @@ export class Lane {
 
   // ---- ストローの生成・回収 ----
   takeStraw(c) {
-    const s = this.pool.pop() ?? new THREE.Mesh(strawGeo, strawMats[0]);
-    s.material = strawMats[c];
+    const s = this.pool.pop() ?? new THREE.Mesh(strawGeo, strawMat(c));
+    s.material = strawMat(c);
     s.castShadow = true;
     s.visible = true;
     if (!s.parent) this.scene.add(s);
@@ -133,11 +142,13 @@ export class Lane {
   cut(extraTime) {
     if (!this.current || this.current.cut >= this.current.size) {
       const size = CONFIG.bundleSizeMin + Math.floor(Math.random() * (CONFIG.bundleSizeMax - CONFIG.bundleSizeMin + 1));
-      this.colorCursor = (this.colorCursor + 1) % STRAW_COLORS.length;
-      this.current = { size, c: this.colorCursor, cut: 0 };
+      // 製品の色を1束ごとに順番に使う。製品はこの束を切り始めた時点のもの
+      const product = this.product;
+      this.colorCursor = (this.colorCursor + 1) % product.colors.length;
+      this.current = { size, c: product.colors[this.colorCursor], p: product.id, cut: 0 };
       this.groups.push(this.current);
-      this.tubeMat.color.setHex(STRAW_COLORS[this.current.c]);
-      this.m.extruder.userData.pelletMat.color.setHex(STRAW_COLORS[this.current.c]);
+      this.tubeMat.color.setHex(this.current.c);
+      this.m.extruder.userData.pelletMat.color.setHex(this.current.c);
     }
     this.current.cut++;
     const s = this.takeStraw(this.current.c);
@@ -150,7 +161,7 @@ export class Lane {
     const g = new THREE.Group();
     const offs = CLUSTER[group.size] ?? CLUSTER[5];
     for (const [y, z] of offs) {
-      const s = new THREE.Mesh(strawGeo, strawMats[group.c]);
+      const s = new THREE.Mesh(strawGeo, strawMat(group.c));
       s.position.set(0, y, z);
       s.castShadow = true;
       g.add(s);
@@ -242,7 +253,7 @@ export class Lane {
       if (b.mesh.position.z >= this.L.dockInZ) {
         this.scene.remove(b.mesh);
         this.bundles.splice(i, 1);
-        this.state.addStock(b.group.size, b.group.c);
+        this.state.addStock(b.group.size, b.group.c, b.group.p);
       }
     }
 

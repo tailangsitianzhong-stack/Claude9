@@ -9,7 +9,7 @@ import { Truck } from './sim/truck.js';
 import { Workers } from './sim/workers.js';
 import { Hud } from './ui/hud.js';
 
-const yen = (n) => '¥' + Math.floor(n).toLocaleString('ja-JP');
+import { formatYen as yen } from './economy.js';
 
 const state = GameState.load();
 const stage = createStage(document.getElementById('app'), TOWN.bounds);
@@ -138,6 +138,7 @@ let acc = 0;
 let hudTimer = 0;
 function step(dt) {
   time += dt;
+  state.decaySales(dt);
   plant.update(dt, time);
   truck.update(dt);
   workers.update(dt);

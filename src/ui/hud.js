@@ -1,6 +1,9 @@
 import { UPGRADES, COMPANY_NAME, LOTS, LAND } from '../config.js';
+import { PRODUCTS, MAX_LEVEL } from '../data/products.js';
+import { formatYen, formatNum, bundlesPerMinPerLane } from '../economy.js';
 
-const yen = (n) => '¥' + Math.floor(n).toLocaleString('ja-JP');
+const yen = formatYen;
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const STATUS_LABEL = { running: '稼働中', idle: '待機中', blocked: '停止中' };
 
 // 縦画面用 HUD（DOM オーバーレイ）。毎フレームではなく一定間隔で更新する。
@@ -13,6 +16,8 @@ export class Hud {
     this.state.on('delivery', (r) => this.onDelivery(r));
     this.state.on('change', () => this.update());
     this.state.on('land', () => this.renderNav());
+    this.state.on('levelup', (e) => this.onLevelUp(e));
+    this.state.on('products', () => this.sheet?.type !== 'lot' && this.renderSheet());
   }
 
   build() {
@@ -23,7 +28,11 @@ export class Hud {
           <div class="logo">🥤</div>
           <div>
             <div class="name">${COMPANY_NAME}</div>
-            <div class="sub">従業員 ${s.employees.length}人 ・ おろし先 ${s.buyers.length}社</div>
+            <div class="lvrow">
+              <span class="lv-badge" id="h-lv"></span>
+              <div class="xpbar" role="progressbar" aria-label="次のレベルまで"><i id="h-xp"></i></div>
+            </div>
+            <div class="sub" id="h-sub"></div>
           </div>
         </div>
         <div class="money-box">
@@ -44,6 +53,7 @@ export class Hud {
         <div class="info-title" id="info-title"></div>
         <div class="info-status" id="info-status"></div>
         <div class="info-desc" id="info-desc"></div>
+        <div class="info-product" id="info-product"></div>
       </div>
       <footer class="panel">
         <button class="ship" id="ship" type="button"></button>
@@ -65,6 +75,10 @@ export class Hud {
       infoDesc: this.$('info-desc'),
       nav: this.$('nav'),
       sheet: this.$('sheet'),
+      lv: this.$('h-lv'),
+      xp: this.$('h-xp'),
+      sub: this.$('h-sub'),
+      infoProduct: this.$('info-product'),
     };
     this.renderNav();
     this.el.ship.addEventListener('click', () => {
@@ -107,10 +121,15 @@ export class Hud {
     this.el.money.textContent = yen(s.money);
     const exp = s.expectedPerMinute();
     this.el.rate.textContent = `見込み +${yen(exp.value)}/分`;
+    const li = s.levelInfo;
+    this.el.lv.textContent = `Lv.${li.level.toLocaleString('ja-JP')}`;
+    this.el.xp.style.width = `${(li.ratio * 100).toFixed(1)}%`;
+    this.el.sub.textContent =
+      li.level >= MAX_LEVEL ? '最高レベル到達！' : `次のLvまで ${yen(li.need - li.into)} ・ 取引先 ${s.totalBuyers.toLocaleString('ja-JP')}社`;
 
     this.el.prod.textContent = `⚙️ ${s.activeLaneCount}ライン・${s.bundleInterval.toFixed(1)}秒`;
     const full = s.stock.length >= s.dockCapacity;
-    this.el.stock.textContent = `📦 ${s.stock.length}/${s.dockCapacity}束`;
+    this.el.stock.textContent = `📦 ${formatNum(s.stock.length)}/${formatNum(s.dockCapacity)}束`;
     this.el.stock.classList.toggle('bad', full);
     this.el.prod.classList.toggle('bad', plant.blockedReason === 'dockFull');
 
@@ -133,7 +152,7 @@ export class Hud {
     const ship = this.el.ship;
     if (truck.canShip) {
       ship.disabled = false;
-      ship.textContent = `いますぐ出荷（${Math.min(s.stock.length, s.truckCapacity)}束）`;
+      ship.textContent = `いますぐ出荷（${formatNum(Math.min(s.stock.length, s.truckCapacity))}束）`;
     } else {
       ship.disabled = true;
       ship.textContent = truck.mode === 'docked' ? '在庫なし' : 'トラック配送中…';
@@ -142,7 +161,7 @@ export class Hud {
 
     for (const [id, c] of Object.entries(this.cards)) {
       const u = UPGRADES[id];
-      const lv = s.level(id);
+      const lv = s.upgradeLevel(id);
       const maxed = s.isMaxed(id);
       c.lv.textContent = maxed ? 'MAX' : `Lv.${lv}`;
       c.effect.textContent = maxed ? u.format(s.value(id)) : `${u.format(s.value(id))} → ${u.format(s.value(id, lv + 1))}`;
@@ -152,7 +171,7 @@ export class Hud {
     }
 
     if (this.infoTarget) this.renderInfoStatus();
-    if (this.sheet) {
+    if (this.sheet?.type === 'lot') {
       const key = `${this.state.money >= this.state.sectionCost(this.sheet.lotId)}|${this.state.money >= this.state.bulkCost(this.sheet.lotId)}|${this.state.remainingIndices(this.sheet.lotId).length}`;
       if (key !== this.sheetKey) {
         this.sheetKey = key;
@@ -162,20 +181,32 @@ export class Hud {
   }
 
   onDelivery(r) {
-    this.toast(`<b>+${yen(r.net)}</b> ${r.buyer.name}に${r.bundles}束（${r.straws}本）おろしました`);
+    const what = r.kinds > 1 ? `${esc(r.product.name)}ほか${r.kinds - 1}品` : esc(r.product.name);
+    const drop = r.saturation < 0.995 ? ` <span class="warn">需要オーバーで値崩れ ×${r.saturation.toFixed(2)}</span>` : '';
+    this.toast(`<b>+${yen(r.net)}</b> ${what} ${formatNum(r.bundles)}束をおろしました${drop}`);
     this.el.money.classList.remove('bump');
     void this.el.money.offsetWidth;
     this.el.money.classList.add('bump');
   }
 
-  toast(html) {
+  toast(html, cls = '') {
     const t = document.createElement('div');
-    t.className = 'toast';
+    t.className = 'toast ' + cls;
     t.innerHTML = html;
     this.el.toasts.prepend(t);
     while (this.el.toasts.children.length > 2) this.el.toasts.lastChild.remove();
-    setTimeout(() => t.classList.add('out'), 2600);
-    setTimeout(() => t.remove(), 3100);
+    const life = cls.includes('big') ? 5000 : 2600;
+    setTimeout(() => t.classList.add('out'), life);
+    setTimeout(() => t.remove(), life + 500);
+  }
+
+  onLevelUp(e) {
+    const names = e.unlocked.map((p) => esc(p.name));
+    this.toast(
+      `<b>Lv.${e.to.toLocaleString('ja-JP')}にアップ！</b>` + (names.length ? ` 新製品「${names.join('」「')}」が作れるようになりました` : ''),
+      names.length ? 'level big' : 'level',
+    );
+    this.renderNav();
   }
 
   showInfo(obj) {
@@ -186,6 +217,22 @@ export class Hud {
     this.el.infoTitle.textContent = info.title;
     this.el.infoDesc.textContent = info.desc;
     this.renderInfoStatus();
+    // ラインの機械なら「作っている製品」と変更ボタン
+    const lane = obj.userData.lane;
+    const box = this.el.infoProduct;
+    if (lane) {
+      const p = this.state.productOf(lane.key);
+      box.innerHTML = `
+        <div class="ip-label">このラインの製品</div>
+        <div class="ip-row">
+          <div><b>${esc(p.name)}</b><span>${yen(p.price)}/本・取引先${p.buyers}社</span></div>
+          <button type="button" class="ip-btn" id="ip-change">製品を変える</button>
+        </div>`;
+      this.$('ip-change').addEventListener('click', () => this.showProductPicker(lane.key));
+      box.hidden = false;
+    } else {
+      box.hidden = true;
+    }
     this.el.info.classList.remove('hidden');
   }
 
@@ -229,6 +276,8 @@ export class Hud {
       b.addEventListener('click', onClick);
       nav.appendChild(b);
     };
+    const n = this.state.unlocked.length;
+    add(`📦 製品 ${n}/${PRODUCTS.length}`, () => this.showCatalog(), 'products');
     for (const lot of this.state.ownedLots()) add(`🏭 ${lot.short}`, () => this.game.focusLot(lot.id));
     add('🗺 鹿沼市', () => this.game.focusTown(), 'map');
   }
@@ -236,7 +285,7 @@ export class Hud {
   // ---- 空き地の購入シート（1区画 or まとめて）----
   showLotSheet(lotId, index) {
     this.hideInfo();
-    this.sheet = { lotId, index };
+    this.sheet = { type: 'lot', lotId, index };
     this.renderSheet();
     this.el.sheet.classList.remove('hidden');
   }
@@ -248,6 +297,8 @@ export class Hud {
 
   renderSheet() {
     if (!this.sheet) return;
+    if (this.sheet.type === 'picker') return this.renderPicker();
+    if (this.sheet.type === 'catalog') return this.renderCatalog();
     const s = this.state;
     const lot = LOTS.find((l) => l.id === this.sheet.lotId);
     const rest = s.remainingIndices(lot.id).length;
@@ -289,5 +340,121 @@ export class Hud {
     this.$('sheet-close').addEventListener('click', () => this.hideSheet());
     this.$('buy-one').addEventListener('click', () => this.game.buySection(lot.id, this.sheet.index));
     this.$('buy-all')?.addEventListener('click', () => this.game.buyAll(lot.id));
+  }
+
+  // ---- 製品：いまの生産量（束/分）----
+  productionByProduct() {
+    const s = this.state;
+    const per = bundlesPerMinPerLane(s);
+    const m = new Map();
+    for (const k of s.owned) if (s.isLaneActive(k)) m.set(s.productOf(k).id, (m.get(s.productOf(k).id) ?? 0) + per);
+    return m;
+  }
+
+  productRow(p, { current, made, button }) {
+    const locked = p.unlock > this.state.level;
+    const demandText = made ? `需要 ${formatNum(p.demand)}束/分・生産 ${formatNum(made)}束/分` : `需要 ${formatNum(p.demand)}束/分`;
+    const over = made > p.demand;
+    return `
+      <li class="prod ${locked ? 'locked' : ''} ${current ? 'current' : ''}">
+        <span class="swatch" style="background:linear-gradient(${p.colors.map((c) => '#' + c.toString(16).padStart(6, '0')).join(',')})"></span>
+        <div class="prod-main">
+          <div class="prod-name">${esc(p.name)}${p.niche ? '<em>こだわり品</em>' : ''}</div>
+          <div class="prod-meta">${locked ? `Lv.${p.unlock.toLocaleString('ja-JP')}で解放` : `${yen(p.price)}/本 ・ 取引先 ${p.buyers}社 ・ <span class="${over ? 'warn' : ''}">${demandText}</span>`}</div>
+        </div>
+        ${button ?? ''}
+      </li>`;
+  }
+
+  // 1つのラインの製品を選ぶ
+  showProductPicker(key) {
+    this.hideInfo();
+    this.sheet = { type: 'picker', key };
+    this.renderPicker();
+    this.el.sheet.classList.remove('hidden');
+  }
+
+  renderPicker() {
+    const s = this.state;
+    const key = this.sheet.key;
+    const cur = s.productOf(key).id;
+    const made = this.productionByProduct();
+    const list = [...s.unlocked].sort((a, b) => b.price - a.price);
+    const next = PRODUCTS.find((p) => p.unlock > s.level);
+    this.el.sheet.innerHTML = `
+      <div class="sheet-head">
+        <div>
+          <div class="sheet-kind">${esc(LOTS.find((l) => l.id === key.split(':')[0])?.short ?? '')}・${Number(key.split(':')[1]) + 1}番ライン</div>
+          <div class="sheet-title">作る製品を選ぶ</div>
+          <div class="sheet-town">需要（取引先×10束/分）を超えて作ると、超えた分だけ値崩れします</div>
+        </div>
+        <button type="button" class="sheet-close" id="sheet-close" aria-label="閉じる">✕</button>
+      </div>
+      <button type="button" class="buy one" id="auto-assign"><span>おまかせ配分<small>全ラインを需要と単価で自動で割り当て</small></span><b>⚡</b></button>
+      <ul class="prod-list">
+        ${list
+          .map((p) =>
+            this.productRow(p, {
+              current: p.id === cur,
+              made: made.get(p.id),
+              button: p.id === cur ? '<span class="prod-cur">生産中</span>' : `<button type="button" class="prod-pick" data-pid="${p.id}">これにする</button>`,
+            }),
+          )
+          .join('')}
+      </ul>
+      ${next ? `<p class="sheet-note">次の新製品：Lv.${next.unlock.toLocaleString('ja-JP')}「${esc(next.name)}」（${yen(next.price)}/本）</p>` : ''}
+    `;
+    this.$('sheet-close').addEventListener('click', () => this.hideSheet());
+    this.$('auto-assign').addEventListener('click', () => {
+      s.autoAssignAll();
+      this.toast('<b>おまかせ配分</b> 全ラインの製品を割り当てました');
+    });
+    this.el.sheet.querySelectorAll('.prod-pick').forEach((b) =>
+      b.addEventListener('click', () => {
+        const p = PRODUCTS[Number(b.dataset.pid)];
+        if (s.setLaneProduct(key, p.id)) this.toast(`<b>${esc(p.name)}</b>の生産に切り替えました`);
+      }),
+    );
+  }
+
+  // 100種類の製品カタログ
+  showCatalog() {
+    this.hideInfo();
+    this.sheet = { type: 'catalog' };
+    this.renderCatalog();
+    this.el.sheet.classList.remove('hidden');
+  }
+
+  renderCatalog() {
+    const s = this.state;
+    const made = this.productionByProduct();
+    const series = [...new Set(PRODUCTS.map((p) => p.series))];
+    this.el.sheet.innerHTML = `
+      <div class="sheet-head">
+        <div>
+          <div class="sheet-kind">Lv.${s.level.toLocaleString('ja-JP')} ・ ${s.unlocked.length}/${PRODUCTS.length}種類</div>
+          <div class="sheet-title">製品カタログ</div>
+          <div class="sheet-town">稼いでレベルを上げると新しい製品が作れます。製品は機械をタップして切り替え</div>
+        </div>
+        <button type="button" class="sheet-close" id="sheet-close" aria-label="閉じる">✕</button>
+      </div>
+      <button type="button" class="buy one" id="auto-assign"><span>おまかせ配分<small>全ラインを需要と単価で自動で割り当て</small></span><b>⚡</b></button>
+      <div class="catalog">
+        ${series
+          .map(
+            (name) => `
+          <h3>${esc(name)}</h3>
+          <ul class="prod-list">${PRODUCTS.filter((p) => p.series === name)
+            .map((p) => this.productRow(p, { made: made.get(p.id), current: made.has(p.id) }))
+            .join('')}</ul>`,
+          )
+          .join('')}
+      </div>
+    `;
+    this.$('sheet-close').addEventListener('click', () => this.hideSheet());
+    this.$('auto-assign').addEventListener('click', () => {
+      s.autoAssignAll();
+      this.toast('<b>おまかせ配分</b> 全ラインの製品を割り当てました');
+    });
   }
 }

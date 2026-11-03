@@ -16,9 +16,7 @@ export const CONFIG = {
   bundlerBuffer: 14, // 結束機の手前に溜められるストロー本数（超えるとカッター停止）
   beltSpeed: 0.9, // 初期のベルト速度（生産速度に比例して上がる）
 
-  // お金（利益は「おろした時点」で入る）
-  pricePerStraw: 12, // 卸値（1本）
-  materialCostPerStraw: 3, // 原料費（1本）
+  // お金（利益は「おろした時点」で入る）。卸値・取引先は製品ごと（src/data/products.js）
 
   // 倉庫
   baseDockCapacity: 30,
@@ -47,17 +45,17 @@ export const UPGRADES = {
     name: 'トラック積載',
     icon: '🚚',
     baseCost: 350,
-    growth: 1.25,
-    max: 15,
-    effect: (lv) => 6 + 4 * lv,
-    format: (v) => `${v}束/便`,
+    growth: 1.28,
+    max: 40,
+    effect: (lv) => Math.round(6 * Math.pow(1.22, lv)),
+    format: (v) => `${v.toLocaleString('ja-JP')}束/便`,
   },
   quality: {
     name: '品質（卸値）',
     icon: '✨',
     baseCost: 600,
-    growth: 1.32,
-    max: 10,
+    growth: 1.3,
+    max: 50,
     effect: (lv) => 1 + 0.12 * lv,
     format: (v) => `×${v.toFixed(2)}`,
   },
@@ -65,10 +63,10 @@ export const UPGRADES = {
     name: '倉庫の広さ',
     icon: '📦',
     baseCost: 300,
-    growth: 1.2,
-    max: 10,
-    effect: (lv) => CONFIG.baseDockCapacity + 15 * lv,
-    format: (v) => `${v}束`,
+    growth: 1.22,
+    max: 40,
+    effect: (lv) => Math.round(CONFIG.baseDockCapacity * Math.pow(1.24, lv)),
+    format: (v) => `${v.toLocaleString('ja-JP')}束`,
   },
 };
 
@@ -77,13 +75,6 @@ export const EMPLOYEES = [
   { name: '佐藤', role: '押出機オペレーター', station: 0, color: 0x2c3e75 },
   { name: '鈴木', role: 'カッター・品質チェック', station: 1, color: 0x2e7d5b },
   { name: '高橋', role: '結束・出荷', station: 2, color: 0x7a3e9d },
-];
-
-// 初期のおろし先（架空）。トラックは順番に回る。
-export const BUYERS = [
-  { id: 'midori', name: 'みどり商店', priceMul: 1.0 },
-  { id: 'sora', name: 'カフェ・ソラ', priceMul: 1.15 },
-  { id: 'hanamaru', name: 'はなまるスーパー', priceMul: 0.95 },
 ];
 
 // ---- 舞台：栃木県鹿沼市 ----

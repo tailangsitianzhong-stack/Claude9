@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { LANE_STEPS, LOTS } from '../config.js';
 import { LAYOUT, PLOT, sectionRange, sectionCenter, sectionKey, parseKey, lotById, lotBox } from './factory.js';
 
-const yen = (n) => '¥' + Math.floor(n).toLocaleString('ja-JP');
+import { formatYen as yen } from '../economy.js';
 const STEP_Z = [LAYOUT.extruderZ, LAYOUT.cutterZ, LAYOUT.bundlerZ];
 
 // 地面に置く「タップして購入」ボタン。看板（常にカメラを向く）＋足元の光る輪。
