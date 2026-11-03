@@ -1,4 +1,5 @@
-import { createEnvironment, createTruck } from './models.js';
+import { createTruck } from './models.js';
+import { LOTS, LAND } from '../config.js';
 
 // 工場内のレイアウト（z が小さいほど画面の上）。ラインは上から下へ流れる。
 // x は区画ごとのライン中心からの相対位置ではなく、z と高さだけを共通で持つ。
@@ -24,10 +25,10 @@ export const LAYOUT = {
   ],
 };
 
-// 区画：0 は最初の工場（幅 8.8）、左右に幅 5.0 の区画を足していく
-export const PLOT = { baseHalf: 4.4, width: 5.0, depth: 16.8 };
+// 本社の区画：中央(2番)は幅 8.8、左右に幅 5.0 の区画が2つずつ
+export const PLOT = { baseHalf: 4.4, width: LAND.sectionWidth, depth: LAND.depth };
 
-export function plotRange(plot) {
+function homePlotRange(plot) {
   if (plot === 0) return [-PLOT.baseHalf, PLOT.baseHalf];
   const k = Math.abs(plot);
   const a = PLOT.baseHalf + PLOT.width * (k - 1);
@@ -35,18 +36,40 @@ export function plotRange(plot) {
   return plot > 0 ? [a, b] : [-b, -a];
 }
 
-export function laneX(plot) {
-  const [a, b] = plotRange(plot);
-  return (a + b) / 2;
+export const lotById = (id) => LOTS.find((l) => l.id === id);
+export const sectionKey = (lotId, i) => `${lotId}:${i}`;
+export function parseKey(key) {
+  const [lotId, i] = key.split(':');
+  return { lotId, index: Number(i) };
 }
 
-export function landBounds(plots) {
-  const ranges = [...plots].sort((a, b) => a - b).map(plotRange);
+// 区画の x 範囲 [左, 右]
+export function sectionRange(lot, i) {
+  if (lot.home) return homePlotRange(i - 2);
+  return [lot.x + i * PLOT.width, lot.x + (i + 1) * PLOT.width];
+}
+export function sectionCount(lot) {
+  return lot.home ? 5 : lot.sections;
+}
+export function sectionCenter(lot, i) {
+  const [a, b] = sectionRange(lot, i);
+  return { x: (a + b) / 2, z: lot.z };
+}
+
+// 持っている区画の範囲（建屋の大きさ）
+export function ownedBounds(lot, indices) {
+  const ranges = [...indices].sort((a, b) => a - b).map((i) => sectionRange(lot, i));
   return { minX: ranges[0][0], maxX: ranges[ranges.length - 1][1], edges: ranges };
 }
 
+export function lotBox(lot) {
+  const n = sectionCount(lot);
+  const [a] = sectionRange(lot, 0);
+  const [, b] = sectionRange(lot, n - 1);
+  return { minX: a, maxX: b, minZ: lot.z - PLOT.depth / 2, maxZ: lot.z + PLOT.depth / 2 };
+}
+
 export function buildFactory(scene) {
-  scene.add(createEnvironment());
   const truck = createTruck();
   truck.position.set(0, 0, LAYOUT.truckZ);
   scene.add(truck);

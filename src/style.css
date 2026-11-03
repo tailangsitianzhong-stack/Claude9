@@ -372,3 +372,200 @@ button {
 .card.maxed .lv {
   color: var(--warn);
 }
+
+/* ---------- 工場の切り替え ---------- */
+.nav {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  pointer-events: auto;
+}
+
+.nav::-webkit-scrollbar {
+  display: none;
+}
+
+.nav-btn {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 12px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.nav-btn.map {
+  background: #1d2533;
+  color: #fff;
+}
+
+.nav-btn:focus-visible,
+.buy:focus-visible,
+.card:focus-visible,
+.ship:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- 空き地の購入シート ---------- */
+.sheet {
+  pointer-events: auto;
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(env(safe-area-inset-bottom) + 10px);
+  max-width: 496px;
+  margin: 0 auto;
+  z-index: 5;
+  background: #fff;
+  border-radius: 18px;
+  padding: 14px;
+  box-shadow: 0 10px 30px rgba(20, 40, 70, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: sheet-in 0.2s ease-out;
+}
+
+.sheet.hidden {
+  display: none;
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+}
+
+.sheet-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.sheet-kind {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 800;
+  color: #8a5a00;
+  background: #fff1d6;
+  border-radius: 6px;
+  padding: 2px 7px;
+}
+
+.sheet-title {
+  font-size: 18px;
+  font-weight: 900;
+  margin-top: 4px;
+}
+
+.sheet-town {
+  font-size: 12px;
+  color: var(--sub);
+}
+
+.sheet-close {
+  border: 0;
+  background: #eef1f5;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-size: 14px;
+  flex: 0 0 auto;
+}
+
+.sheet-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+
+.sheet-facts div {
+  background: #f4f6f9;
+  border-radius: 10px;
+  padding: 6px 8px;
+  min-width: 0;
+}
+
+.sheet-facts dt {
+  font-size: 10px;
+  color: var(--sub);
+  font-weight: 700;
+}
+
+.sheet-facts dd {
+  margin: 1px 0 0;
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--sub);
+}
+
+.sheet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.buy {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 15px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.buy span {
+  display: flex;
+  flex-direction: column;
+}
+
+.buy small {
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.85;
+}
+
+.buy b {
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
+.buy.one {
+  background: #e8f6ee;
+  color: #146c3f;
+}
+
+.buy.all {
+  background: linear-gradient(#ff9a2e, #ff7a00);
+  color: #fff;
+}
+
+.buy:disabled {
+  background: #e4e8ee;
+  color: #8a94a3;
+}
+
+.sheet-money {
+  font-size: 12px;
+  color: var(--sub);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

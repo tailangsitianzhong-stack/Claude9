@@ -1,4 +1,4 @@
-import { UPGRADES, COMPANY_NAME } from '../config.js';
+import { UPGRADES, COMPANY_NAME, LOTS, LAND } from '../config.js';
 
 const yen = (n) => '¥' + Math.floor(n).toLocaleString('ja-JP');
 const STATUS_LABEL = { running: '稼働中', idle: '待機中', blocked: '停止中' };
@@ -12,6 +12,7 @@ export class Hud {
     this.build();
     this.state.on('delivery', (r) => this.onDelivery(r));
     this.state.on('change', () => this.update());
+    this.state.on('land', () => this.renderNav());
   }
 
   build() {
@@ -37,6 +38,8 @@ export class Hud {
       </div>
       <div class="toasts" id="toasts"></div>
       <div class="spacer"></div>
+      <nav class="nav" id="nav" aria-label="工場の切り替え"></nav>
+      <div class="sheet hidden" id="sheet" role="dialog" aria-modal="true"></div>
       <div class="info hidden" id="info" role="dialog">
         <div class="info-title" id="info-title"></div>
         <div class="info-status" id="info-status"></div>
@@ -60,7 +63,10 @@ export class Hud {
       infoTitle: this.$('info-title'),
       infoStatus: this.$('info-status'),
       infoDesc: this.$('info-desc'),
+      nav: this.$('nav'),
+      sheet: this.$('sheet'),
     };
+    this.renderNav();
     this.el.ship.addEventListener('click', () => {
       this.game.truck.requestShip();
       this.update();
@@ -146,6 +152,13 @@ export class Hud {
     }
 
     if (this.infoTarget) this.renderInfoStatus();
+    if (this.sheet) {
+      const key = `${this.state.money >= this.state.sectionCost(this.sheet.lotId)}|${this.state.money >= this.state.bulkCost(this.sheet.lotId)}|${this.state.remainingIndices(this.sheet.lotId).length}`;
+      if (key !== this.sheetKey) {
+        this.sheetKey = key;
+        this.renderSheet();
+      }
+    }
   }
 
   onDelivery(r) {
@@ -167,6 +180,7 @@ export class Hud {
 
   showInfo(obj) {
     if (!obj) return this.hideInfo();
+    this.hideSheet();
     this.infoTarget = obj;
     const info = obj.userData.info;
     this.el.infoTitle.textContent = info.title;
@@ -201,5 +215,79 @@ export class Hud {
   hideInfo() {
     this.infoTarget = null;
     this.el.info.classList.add('hidden');
+  }
+
+  // ---- 工場の切り替え（カメラ移動）----
+  renderNav() {
+    const nav = this.el.nav;
+    nav.innerHTML = '';
+    const add = (label, onClick, cls = '') => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'nav-btn ' + cls;
+      b.textContent = label;
+      b.addEventListener('click', onClick);
+      nav.appendChild(b);
+    };
+    for (const lot of this.state.ownedLots()) add(`🏭 ${lot.short}`, () => this.game.focusLot(lot.id));
+    add('🗺 鹿沼市', () => this.game.focusTown(), 'map');
+  }
+
+  // ---- 空き地の購入シート（1区画 or まとめて）----
+  showLotSheet(lotId, index) {
+    this.hideInfo();
+    this.sheet = { lotId, index };
+    this.renderSheet();
+    this.el.sheet.classList.remove('hidden');
+  }
+
+  hideSheet() {
+    this.sheet = null;
+    this.el.sheet.classList.add('hidden');
+  }
+
+  renderSheet() {
+    if (!this.sheet) return;
+    const s = this.state;
+    const lot = LOTS.find((l) => l.id === this.sheet.lotId);
+    const rest = s.remainingIndices(lot.id).length;
+    if (!rest) return this.hideSheet();
+    const one = s.sectionCost(lot.id);
+    const all = s.bulkCost(lot.id);
+    const area = LAND.sectionArea;
+    const owned = s.ownedIndices(lot.id).length;
+    const realOne = Math.round((area * lot.unitPrice) / 10000);
+    this.el.sheet.innerHTML = `
+      <div class="sheet-head">
+        <div>
+          <div class="sheet-kind">${lot.kind}</div>
+          <div class="sheet-title">${lot.home ? '本社工場の隣の土地' : lot.name}</div>
+          <div class="sheet-town">${lot.town}</div>
+        </div>
+        <button type="button" class="sheet-close" id="sheet-close" aria-label="閉じる">✕</button>
+      </div>
+      <dl class="sheet-facts">
+        <div><dt>残り</dt><dd>${rest}区画</dd></div>
+        <div><dt>面積</dt><dd>${(rest * area).toLocaleString('ja-JP')}㎡</dd></div>
+        <div><dt>参考地価</dt><dd>${(lot.unitPrice / 10000).toFixed(1)}万円/㎡</dd></div>
+      </dl>
+      <p class="sheet-note">${lot.note}をもとにしたゲーム内の値段です（現実なら1区画 約${realOne.toLocaleString('ja-JP')}万円）。1区画に1本の生産ラインを置けます。${owned ? `いま${owned}区画を持っています。` : ''}</p>
+      <div class="sheet-actions">
+        <button type="button" class="buy one" id="buy-one" ${s.money < one ? 'disabled' : ''}>
+          <span>1区画だけ買う</span><b>${yen(one)}</b>
+        </button>
+        ${
+          rest > 1
+            ? `<button type="button" class="buy all" id="buy-all" ${s.money < all ? 'disabled' : ''}>
+                <span>${rest}区画すべて買う<small>まとめ買いで1割引き</small></span><b>${yen(all)}</b>
+              </button>`
+            : ''
+        }
+      </div>
+      <div class="sheet-money">所持金 ${yen(s.money)}</div>
+    `;
+    this.$('sheet-close').addEventListener('click', () => this.hideSheet());
+    this.$('buy-one').addEventListener('click', () => this.game.buySection(lot.id, this.sheet.index));
+    this.$('buy-all')?.addEventListener('click', () => this.game.buyAll(lot.id));
   }
 }

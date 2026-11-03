@@ -1,4 +1,8 @@
-import { CONFIG, UPGRADES, EMPLOYEES, BUYERS, LAND, LANE_STEPS, LANE_COST_GROWTH } from './config.js';
+import { CONFIG, UPGRADES, EMPLOYEES, BUYERS, LAND, LOTS, LANE_STEPS, LANE_COST_GROWTH } from './config.js';
+
+const HOME_KEY = 'home:2';
+const lotOf = (id) => LOTS.find((l) => l.id === id);
+const countOf = (lot) => (lot.home ? 5 : lot.sections);
 
 const SAVE_KEY = 'straw-factory-save-v1'; // キーは据え置き、中身の v で移行する
 
@@ -13,8 +17,8 @@ export class GameState {
     this.employees = EMPLOYEES.map((e) => ({ ...e }));
     this.buyers = BUYERS.map((b) => ({ ...b, delivered: 0 }));
     this.buyerIndex = 0;
-    this.land = [0]; // 所有している区画
-    this.lanes = { 0: LANE_STEPS.length }; // 区画ごとに置いた機械の数（3 で稼働）
+    this.owned = [HOME_KEY]; // 所有している区画（"土地ID:番号"）
+    this.lanes = { [HOME_KEY]: LANE_STEPS.length }; // 区画ごとに置いた機械の数（3 で稼働）
     this._listeners = new Map();
   }
 
@@ -66,65 +70,94 @@ export class GameState {
     return true;
   }
 
-  // --- 土地 ---
-  get landMin() {
-    return Math.min(...this.land);
+  // --- 土地（空き地の区画）---
+  owns(key) {
+    return this.owned.includes(key);
   }
-  get landMax() {
-    return Math.max(...this.land);
+  ownedIndices(lotId) {
+    return this.owned.filter((k) => k.startsWith(lotId + ':')).map((k) => Number(k.split(':')[1]));
   }
-  ownsPlot(plot) {
-    return this.land.includes(plot);
+  ownedLots() {
+    return LOTS.filter((l) => this.ownedIndices(l.id).length > 0);
   }
-  // 買える区画（所有地の両隣で範囲内のもの）
-  buyablePlots() {
-    return [this.landMin - 1, this.landMax + 1].filter((p) => p >= LAND.minPlot && p <= LAND.maxPlot);
+  remainingIndices(lotId) {
+    const lot = lotOf(lotId);
+    const own = new Set(this.ownedIndices(lotId));
+    return [...Array(countOf(lot)).keys()].filter((i) => !own.has(i));
   }
-  landCost() {
-    return LAND.costs[this.land.length - 1] ?? Infinity;
+  // 1区画ずつ買うときに買える区画：持っている区画の隣。まだ持っていなければ入口の区画
+  buyableIndices(lotId) {
+    const lot = lotOf(lotId);
+    const own = this.ownedIndices(lotId);
+    if (own.length === 0) return [lot.startSection ?? 0];
+    const n = countOf(lot);
+    const set = new Set(own);
+    return [Math.min(...own) - 1, Math.max(...own) + 1].filter((i) => i >= 0 && i < n && !set.has(i));
   }
-  buyLand(plot) {
-    if (!this.buyablePlots().includes(plot)) return { ok: false, reason: 'unavailable' };
-    const cost = this.landCost();
+  // k 区画先に買うときの値段（持つほど高くなる）
+  sectionCost(lotId, k = 0) {
+    const lot = lotOf(lotId);
+    const base = LAND.sectionArea * lot.unitPrice * LAND.yenScale;
+    return Math.round(base * Math.pow(LAND.growth, this.owned.length - 1 + k));
+  }
+  bulkCost(lotId) {
+    const n = this.remainingIndices(lotId).length;
+    let sum = 0;
+    for (let k = 0; k < n; k++) sum += this.sectionCost(lotId, k);
+    return Math.round(sum * (n > 1 ? LAND.bulkDiscount : 1));
+  }
+  _addSections(lotId, indices, cost) {
     if (this.money < cost) return { ok: false, reason: 'money', short: cost - this.money };
     this.money -= cost;
-    this.land.push(plot);
-    this.lanes[plot] = 0;
-    this.emit('land', plot);
+    for (const i of indices) {
+      const key = `${lotId}:${i}`;
+      this.owned.push(key);
+      this.lanes[key] = 0;
+    }
+    this.emit('land', lotId);
     this.emit('change');
-    return { ok: true, cost };
+    return { ok: true, cost, count: indices.length };
+  }
+  buySection(lotId, index) {
+    if (!this.buyableIndices(lotId).includes(index)) return { ok: false, reason: 'unavailable' };
+    return this._addSections(lotId, [index], this.sectionCost(lotId));
+  }
+  buyAllSections(lotId) {
+    const rest = this.remainingIndices(lotId);
+    if (!rest.length) return { ok: false, reason: 'unavailable' };
+    return this._addSections(lotId, rest, this.bulkCost(lotId));
   }
 
   // --- 機械の設置（ライン増設）---
-  laneStage(plot) {
-    return this.lanes[plot] ?? 0;
+  laneStage(key) {
+    return this.lanes[key] ?? 0;
   }
-  isLaneActive(plot) {
-    return this.laneStage(plot) >= LANE_STEPS.length;
+  isLaneActive(key) {
+    return this.laneStage(key) >= LANE_STEPS.length;
   }
   get activeLaneCount() {
-    return this.land.filter((p) => this.isLaneActive(p)).length;
+    return this.owned.filter((k) => this.isLaneActive(k)).length;
   }
-  nextLaneStep(plot) {
-    if (!this.ownsPlot(plot)) return null;
-    return LANE_STEPS[this.laneStage(plot)] ?? null;
+  nextLaneStep(key) {
+    if (!this.owns(key)) return null;
+    return LANE_STEPS[this.laneStage(key)] ?? null;
   }
-  laneStepCost(plot) {
-    const step = this.nextLaneStep(plot);
+  laneStepCost(key) {
+    const step = this.nextLaneStep(key);
     if (!step) return Infinity;
-    const extra = this.land.filter((p) => p !== 0 && this.isLaneActive(p)).length;
+    const extra = this.owned.filter((k) => k !== HOME_KEY && this.isLaneActive(k)).length;
     return Math.round(step.cost * Math.pow(LANE_COST_GROWTH, extra));
   }
-  buildLaneStep(plot) {
-    const step = this.nextLaneStep(plot);
+  buildLaneStep(key) {
+    const step = this.nextLaneStep(key);
     if (!step) return { ok: false, reason: 'unavailable' };
-    const cost = this.laneStepCost(plot);
+    const cost = this.laneStepCost(key);
     if (this.money < cost) return { ok: false, reason: 'money', short: cost - this.money };
     this.money -= cost;
-    this.lanes[plot] = this.laneStage(plot) + 1;
-    this.emit('lanes', plot);
+    this.lanes[key] = this.laneStage(key) + 1;
+    this.emit('lanes', key);
     this.emit('change');
-    return { ok: true, cost, step, completed: this.isLaneActive(plot) };
+    return { ok: true, cost, step, completed: this.isLaneActive(key) };
   }
 
   // --- 在庫 ---
@@ -175,7 +208,7 @@ export class GameState {
   // --- セーブ / ロード（localStorage は使えない環境もあるので try/catch）---
   save(extra = {}) {
     const data = {
-      v: 2,
+      v: 3,
       money: this.money,
       totalEarned: this.totalEarned,
       totalBundlesSold: this.totalBundlesSold,
@@ -183,7 +216,7 @@ export class GameState {
       // 配送中の荷物は倉庫に戻した扱いで保存する
       stock: [...(extra.cargo ?? []), ...this.stock],
       buyerIndex: this.buyerIndex,
-      land: this.land,
+      owned: this.owned,
       lanes: this.lanes,
       buyers: this.buyers.map((b) => ({ id: b.id, delivered: b.delivered })),
       savedAt: Date.now(),
@@ -201,7 +234,7 @@ export class GameState {
       const raw = localStorage.getItem(SAVE_KEY);
       if (!raw) return s;
       const d = JSON.parse(raw);
-      if (d.v !== 1 && d.v !== 2) return s;
+      if (![1, 2, 3].includes(d.v)) return s;
       s.money = Number(d.money) || 0;
       s.totalEarned = Number(d.totalEarned) || 0;
       s.totalBundlesSold = Number(d.totalBundlesSold) || 0;
@@ -210,14 +243,29 @@ export class GameState {
       }
       s.stock = Array.isArray(d.stock) ? d.stock.slice(0, s.dockCapacity) : [];
       s.buyerIndex = d.buyerIndex | 0;
-      if (Array.isArray(d.land)) {
-        const land = [...new Set(d.land.map((p) => p | 0))].filter((p) => p >= LAND.minPlot && p <= LAND.maxPlot);
-        if (!land.includes(0)) land.push(0);
-        s.land = land.sort((a, b) => a - b);
-        s.lanes = { 0: LANE_STEPS.length };
-        for (const p of s.land) {
-          if (p !== 0) s.lanes[p] = Math.min(Math.max(0, d.lanes?.[p] | 0), LANE_STEPS.length);
+      // v2 までは本社の区画番号(-2..2)だけを持っていた → "home:番号" に変換
+      let owned = null;
+      let lanes = {};
+      if (Array.isArray(d.owned)) {
+        owned = d.owned;
+        lanes = d.lanes ?? {};
+      } else if (Array.isArray(d.land)) {
+        owned = d.land.map((p) => `home:${(p | 0) + 2}`);
+        for (const p of d.land) lanes[`home:${(p | 0) + 2}`] = d.lanes?.[p];
+      }
+      if (owned) {
+        const valid = new Set();
+        for (const key of owned) {
+          const [id, idx] = String(key).split(':');
+          const lot = lotOf(id);
+          const i = Number(idx);
+          if (lot && Number.isInteger(i) && i >= 0 && i < countOf(lot)) valid.add(`${id}:${i}`);
         }
+        valid.add(HOME_KEY);
+        s.owned = [...valid];
+        s.lanes = {};
+        for (const k of s.owned) s.lanes[k] = Math.min(Math.max(0, lanes[k] | 0), LANE_STEPS.length);
+        s.lanes[HOME_KEY] = LANE_STEPS.length;
       }
       for (const b of d.buyers ?? []) {
         const t = s.buyers.find((x) => x.id === b.id);

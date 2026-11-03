@@ -246,14 +246,14 @@ function makeSignTexture(text) {
   ctx.font = 'bold 54px "Hiragino Sans", "Noto Sans JP", sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(text, 256, 50);
+  ctx.fillText(text, 256, 50, 480);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
 
 // 建屋（床・壁・ゲート・看板）。所有地の範囲 [minX, maxX] に合わせて作り直す。
-export function createShell(companyName, minX, maxX, plotEdges) {
+export function createShell(signText, minX, maxX, plotEdges, gateX = 0) {
   const g = new THREE.Group();
   const W = maxX - minX;
   const cx = (minX + maxX) / 2;
@@ -272,45 +272,20 @@ export function createShell(companyName, minX, maxX, plotEdges) {
   g.add(box(0.2, 0.8, D, MAT.wall, minX, 0.4, 0));
   g.add(box(0.2, 0.8, D, MAT.wall, maxX, 0.4, 0));
   const door = 2.8;
-  const leftW = -door / 2 - minX;
-  const rightW = maxX - door / 2;
-  g.add(box(leftW, 0.8, 0.2, MAT.wall, minX + leftW / 2, 0.4, D / 2));
-  g.add(box(rightW, 0.8, 0.2, MAT.wall, door / 2 + rightW / 2, 0.4, D / 2));
-  // 搬出口ゲート（トラックは中央に着く）
-  for (const s of [-1, 1]) g.add(box(0.18, 2.1, 0.24, MAT.orange, s * (door / 2), 1.05, D / 2));
-  g.add(box(door + 0.18, 0.2, 0.24, MAT.orange, 0, 2.1, D / 2));
+  const leftW = gateX - door / 2 - minX;
+  const rightW = maxX - (gateX + door / 2);
+  if (leftW > 0.05) g.add(box(leftW, 0.8, 0.2, MAT.wall, minX + leftW / 2, 0.4, D / 2));
+  if (rightW > 0.05) g.add(box(rightW, 0.8, 0.2, MAT.wall, maxX - rightW / 2, 0.4, D / 2));
+  // 搬出口ゲート
+  for (const s of [-1, 1]) g.add(box(0.18, 2.1, 0.24, MAT.orange, gateX + s * (door / 2), 1.05, D / 2));
+  g.add(box(door + 0.18, 0.2, 0.24, MAT.orange, gateX, 2.1, D / 2));
   // 柱（区画の境目ごと）
   const xs = [minX, ...plotEdges.slice(1).map(([a]) => a), maxX];
   for (const x of xs) for (const sz of [-1, 1]) g.add(box(0.35, 2.4, 0.35, MAT.bodyDark, x, 1.2, sz * (D / 2)));
-  // 看板（中央の区画の奥）
-  g.add(mesh(new THREE.PlaneGeometry(4.2, 0.8), new THREE.MeshBasicMaterial({ map: makeSignTexture(companyName) }), 0, 2.15, -D / 2 + 0.11, false));
-  g.add(box(4.4, 1.0, 0.1, MAT.bodyDark, 0, 2.15, -D / 2 + 0.03));
-  for (const s of [-1, 1]) g.add(box(0.1, 0.8, 0.1, MAT.bodyDark, s * 1.8, 1.4, -D / 2));
-  return g;
-}
-
-// 地面・道路・木（拡張しても変わらない部分）
-export function createEnvironment() {
-  const g = new THREE.Group();
-  const ground = mesh(new THREE.PlaneGeometry(200, 200), std(0x9fd18a, { roughness: 1 }), 0, -0.11, 0, false);
-  ground.rotation.x = -Math.PI / 2;
-  g.add(ground);
-  const road = mesh(new THREE.PlaneGeometry(200, 2.8), std(0x555b63, { roughness: 1 }), 0, -0.1, 9.7, false);
-  road.rotation.x = -Math.PI / 2;
-  g.add(road);
-  for (let x = -60; x <= 60; x += 3) {
-    const dash = mesh(new THREE.PlaneGeometry(1.4, 0.12), MAT.white, x, -0.095, 9.7, false);
-    dash.rotation.x = -Math.PI / 2;
-    g.add(dash);
-  }
-  // 木は拡張予定地（|x| < 15）と重ならない場所に置く
-  const leaf = std(0x5fae5a);
-  const trunk = std(0x8a5a3b);
-  const trees = [[-17.5, -6], [-17, 3], [17.8, -4], [17.2, 5], [-9, -11.6], [6.5, -11.4], [-1.5, -12.2], [-7.5, 12.9], [5.5, 12.7], [-2, 13.3], [12, 13]];
-  for (const [x, z] of trees) {
-    g.add(mesh(new THREE.CylinderGeometry(0.12, 0.15, 0.8, 6), trunk, x, 0.3, z));
-    g.add(mesh(new THREE.ConeGeometry(0.7, 1.6, 7), leaf, x, 1.4, z));
-  }
+  // 看板（奥の壁の中央）
+  g.add(mesh(new THREE.PlaneGeometry(4.2, 0.8), new THREE.MeshBasicMaterial({ map: makeSignTexture(signText) }), cx, 2.15, -D / 2 + 0.11, false));
+  g.add(box(4.4, 1.0, 0.1, MAT.bodyDark, cx, 2.15, -D / 2 + 0.03));
+  for (const s of [-1, 1]) g.add(box(0.1, 0.8, 0.1, MAT.bodyDark, cx + s * 1.8, 1.4, -D / 2));
   return g;
 }
 

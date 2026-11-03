@@ -9,7 +9,7 @@ import {
   createBundler,
   createDock,
 } from '../scene/models.js';
-import { LAYOUT, laneX } from '../scene/factory.js';
+import { LAYOUT, lotById, parseKey, sectionCenter } from '../scene/factory.js';
 
 // 1区画ぶんの生産ライン： 押出機 → 冷却槽 → カッター → ベルトA → 結束機 → ベルトB → パレット
 // 機械は段階的に設置され、3段階（押出機・カッター・結束機）そろうと稼働する。
@@ -30,12 +30,19 @@ const CLUSTER = {
 const POP_TIME = 0.45;
 
 export class Lane {
-  constructor(scene, state, plant, plot) {
+  constructor(scene, state, plant, key) {
     this.scene = scene;
     this.state = state;
     this.plant = plant;
-    this.plot = plot;
-    this.x = laneX(plot);
+    this.key = key;
+    const { lotId, index } = parseKey(key);
+    this.lot = lotById(lotId);
+    this.index = index;
+    const c = sectionCenter(this.lot, index);
+    this.x = c.x;
+    this.z0 = c.z;
+    // この区画用にずらしたレイアウト（z の値だけ区画の中心からの位置にする）
+    this.L = Object.fromEntries(Object.entries(LAYOUT).map(([k, v]) => [k, k.endsWith('Z') ? v + c.z : v]));
     this.stage = 0;
     this.m = {};
     this.pops = []; // 設置アニメーション
@@ -85,23 +92,23 @@ export class Lane {
 
   buildStep(step, animate) {
     if (step === 1) {
-      this.place('extruder', createExtruder(), LAYOUT.extruderZ, animate);
-      this.place('bath', createCoolingBath(2.0), LAYOUT.bathZ, animate);
+      this.place('extruder', createExtruder(), this.L.extruderZ, animate);
+      this.place('bath', createCoolingBath(2.0), this.L.bathZ, animate);
       this.m.extruder.userData.pelletMat.color.setHex(STRAW_COLORS[this.colorCursor]);
     } else if (step === 2) {
-      this.place('cutter', createCutter(), LAYOUT.cutterZ, animate);
-      const lenA = LAYOUT.bundlerInZ - LAYOUT.cutterOutZ;
-      this.place('beltA', createConveyor(lenA), (LAYOUT.bundlerInZ + LAYOUT.cutterOutZ) / 2, animate);
-      const len = LAYOUT.cutterZ - LAYOUT.extruderOutZ;
+      this.place('cutter', createCutter(), this.L.cutterZ, animate);
+      const lenA = this.L.bundlerInZ - this.L.cutterOutZ;
+      this.place('beltA', createConveyor(lenA), (this.L.bundlerInZ + this.L.cutterOutZ) / 2, animate);
+      const len = this.L.cutterZ - this.L.extruderOutZ;
       this.tube = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.034, len, 8).rotateX(Math.PI / 2), this.tubeMat);
-      this.tube.position.set(this.x, LAYOUT.tubeY, (LAYOUT.cutterZ + LAYOUT.extruderOutZ) / 2);
+      this.tube.position.set(this.x, this.L.tubeY, (this.L.cutterZ + this.L.extruderOutZ) / 2);
       this.tube.castShadow = true;
       this.scene.add(this.tube);
     } else if (step === 3) {
-      this.place('bundler', createBundler(), LAYOUT.bundlerZ, animate);
-      const lenB = LAYOUT.dockInZ - LAYOUT.bundlerOutZ;
-      this.place('beltB', createConveyor(lenB), (LAYOUT.dockInZ + LAYOUT.bundlerOutZ) / 2, animate);
-      this.place('dock', createDock(), LAYOUT.dockZ, animate);
+      this.place('bundler', createBundler(), this.L.bundlerZ, animate);
+      const lenB = this.L.dockInZ - this.L.bundlerOutZ;
+      this.place('beltB', createConveyor(lenB), (this.L.dockInZ + this.L.bundlerOutZ) / 2, animate);
+      this.place('dock', createDock(), this.L.dockZ, animate);
     }
   }
 
@@ -134,7 +141,7 @@ export class Lane {
     }
     this.current.cut++;
     const s = this.takeStraw(this.current.c);
-    s.position.set(this.x, LAYOUT.strawY, LAYOUT.cutterOutZ + this.beltSpeed * extraTime);
+    s.position.set(this.x, this.L.strawY, this.L.cutterOutZ + this.beltSpeed * extraTime);
     this.straws.push(s);
     this.bladeT = 0;
   }
@@ -191,7 +198,7 @@ export class Lane {
     for (let i = this.straws.length - 1; i >= 0; i--) {
       const s = this.straws[i];
       s.position.z += speed * dt;
-      if (s.position.z >= LAYOUT.bundlerInZ) {
+      if (s.position.z >= this.L.bundlerInZ) {
         this.release(s);
         this.straws.splice(i, 1);
         this.arrived++;
@@ -208,7 +215,7 @@ export class Lane {
       head.position.y = 1.4 - 0.32 * Math.sin(Math.PI * p);
       if (p >= 1) {
         const mesh = this.makeBundleMesh(this.bind.group);
-        mesh.position.set(this.x, LAYOUT.strawY + 0.06, LAYOUT.bundlerOutZ);
+        mesh.position.set(this.x, this.L.strawY + 0.06, this.L.bundlerOutZ);
         this.scene.add(mesh);
         this.bundles.push({ mesh, group: this.bind.group });
         this.bind = null;
@@ -232,7 +239,7 @@ export class Lane {
     for (let i = this.bundles.length - 1; i >= 0; i--) {
       const b = this.bundles[i];
       b.mesh.position.z += speed * dt;
-      if (b.mesh.position.z >= LAYOUT.dockInZ) {
+      if (b.mesh.position.z >= this.L.dockInZ) {
         this.scene.remove(b.mesh);
         this.bundles.splice(i, 1);
         this.state.addStock(b.group.size, b.group.c);
