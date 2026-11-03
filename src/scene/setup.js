@@ -148,6 +148,12 @@ export function createStage(container, bounds) {
     scene.fog.near = Math.max(80, dist * 1.1);
     scene.fog.far = Math.max(300, dist * 2.6);
     camera.far = Math.max(700, dist * 3);
+    // 遠くから見下ろすと奥行きの精度が足りずに地面がちらつくので、near も距離に合わせて広げる
+    const near = THREE.MathUtils.clamp(dist * 0.03, 0.3, 12);
+    if (Math.abs(camera.near - near) > 0.05) {
+      camera.near = near;
+      camera.updateProjectionMatrix();
+    }
     if (camera.far !== prevFar) camera.updateProjectionMatrix();
     // 影：注視点の近くだけ
     sun.target.position.set(Math.round(t.x), 0, Math.round(t.z));

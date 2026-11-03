@@ -167,7 +167,7 @@ export function createCutter() {
 export function createBundler() {
   const g = new THREE.Group();
   g.add(box(1.5, 0.9, 1.3, MAT.body, 0, 0.45, 0));
-  g.add(box(1.52, 0.12, 1.32, MAT.blue, 0, 0.84, 0));
+  g.add(box(1.52, 0.12, 1.32, MAT.blue, 0, 0.85, 0)); // 本体の上面(0.9)と重ねない（ちらつき防止）
   g.add(box(0.02, 0.4, 0.9, MAT.glassDark, 0.76, 0.45, 0));
   g.add(box(0.9, 0.1, 0.02, MAT.blue, 0, 0.6, -0.66)); // 搬入
   g.add(box(0.9, 0.1, 0.02, MAT.orange, 0, 0.6, 0.66)); // 搬出

@@ -216,10 +216,10 @@ function addRoads(b) {
     for (let x = r.x0 + 1; x < r.x1; x += 3) b.boxAt(COLORS.dash, x, -0.095, r.z, 1.4, 0.01, 0.12);
   }
   for (const r of TOWN.roadsNS) {
-    b.boxAt(COLORS.asphalt, r.x, -0.121, (r.z0 + r.z1) / 2, W, 0.02, r.z1 - r.z0);
+    b.boxAt(COLORS.asphalt, r.x, -0.128, (r.z0 + r.z1) / 2, W, 0.02, r.z1 - r.z0); // 東西の道より少し下（交差点のちらつき防止）
     for (let z = r.z0 + 1; z < r.z1; z += 3) {
       if (TOWN.roadsEW.some((e) => Math.abs(e.z - z) < 2)) continue;
-      b.boxAt(COLORS.dash, r.x, -0.096, z, 0.12, 0.01, 1.4);
+      b.boxAt(COLORS.dash, r.x, -0.104, z, 0.12, 0.01, 1.4);
     }
   }
 }
@@ -286,7 +286,7 @@ function addPaddies(b, r, x0, x1, z0, z1, avoid) {
       const cz = z + 3;
       if (avoid(cx, cz, 4.5, 3.5)) continue;
       b.boxAt(COLORS.ridge, cx, -0.2, cz, 8.4, 0.12, 6.4);
-      b.boxAt(COLORS.paddy[Math.floor(r() * COLORS.paddy.length)], cx, -0.08, cz, 7.6, 0.02, 5.6);
+      b.boxAt(COLORS.paddy[Math.floor(r() * COLORS.paddy.length)], cx, -0.075, cz, 7.6, 0.02, 5.6); // あぜ(上面 -0.08)から浮かせる
     }
   }
 }
