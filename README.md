@@ -8,6 +8,7 @@ Web で遊ぶ 3D 経営ゲーム。小さなストロー工場から始めて、
 npm install
 npm run dev      # http://localhost:5173 （--host 付きなので同じ Wi-Fi のスマホからも開ける）
 npm run build    # dist/ に静的ファイルを出力
+npm run build:artifact  # artifact/index.html（1ファイル版、Claude の Artifact 公開用）
 ```
 
 ## いまできること
