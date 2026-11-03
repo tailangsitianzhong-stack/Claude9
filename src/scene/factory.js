@@ -1,5 +1,5 @@
 import { createTruck } from './models.js';
-import { LOTS, LAND } from '../config.js';
+import { LOTS, LAND, EXTRA_SLOTS } from '../config.js';
 
 // 工場内のレイアウト（z が小さいほど画面の上）。ラインは上から下へ流れる。
 // x は区画ごとのライン中心からの相対位置ではなく、z と高さだけを共通で持つ。
@@ -19,9 +19,9 @@ export const LAYOUT = {
   strawY: 0.74,
   // 作業員の持ち場（中央ラインの巡回ポイント）
   workerSpots: [
-    [[1.5, -6.6], [1.5, -5.0], [1.7, -3.9]],
+    [[1.45, -6.6], [1.45, -5.0], [1.5, -3.9]],
     [[-1.3, -2.7], [-1.3, -0.6], [-1.4, 0.9]],
-    [[1.3, 3.9], [1.6, 5.3], [1.5, 6.9]],
+    [[1.4, 3.9], [1.55, 5.3], [1.5, 6.9]],
   ],
 };
 
@@ -54,6 +54,20 @@ export function sectionCount(lot) {
 export function sectionCenter(lot, i) {
   const [a, b] = sectionRange(lot, i);
   return { x: (a + b) / 2, z: lot.z };
+}
+
+// ラインの置き場所（区画の中心、または区画の中の追加スペース）
+export function laneCenter(key) {
+  const extra = EXTRA_SLOTS.find((e) => e.key === key);
+  if (extra) return { x: extra.x, z: extra.z };
+  const { lotId, index } = parseKey(key);
+  return sectionCenter(lotById(lotId), index);
+}
+export function laneLabel(key) {
+  const extra = EXTRA_SLOTS.find((e) => e.key === key);
+  const lot = lotById(key.split(':')[0]);
+  if (extra) return `${lot.short}・${extra.name}`;
+  return `${lot.short}・${parseKey(key).index + 1}番ライン`;
 }
 
 // 持っている区画の範囲（建屋の大きさ）

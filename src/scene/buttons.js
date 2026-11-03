@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { LANE_STEPS, LOTS } from '../config.js';
-import { LAYOUT, PLOT, sectionRange, sectionCenter, sectionKey, parseKey, lotById, lotBox } from './factory.js';
+import { LAYOUT, PLOT, sectionRange, sectionCenter, lotById, lotBox, laneCenter } from './factory.js';
 
 import { formatYen as yen } from '../economy.js';
 const STEP_Z = [LAYOUT.extruderZ, LAYOUT.cutterZ, LAYOUT.bundlerZ];
@@ -207,11 +207,10 @@ export class BuildButtons {
       }
     }
     // 機械：持っている区画で、次に置く機械の場所に置く
-    for (const key of s.owned) {
+    for (const key of s.laneKeys) {
       const step = s.laneStage(key);
       if (step >= LANE_STEPS.length) continue;
-      const { lotId, index } = parseKey(key);
-      const c = sectionCenter(lotById(lotId), index);
+      const c = laneCenter(key);
       const btn = new GroundButton({ type: 'lane', key });
       btn.group.position.set(c.x, 0, c.z + STEP_Z[step]);
       this.add(btn);

@@ -56,7 +56,7 @@ export class Plant {
 
   syncLanes(animate) {
     let changed = false;
-    for (const key of this.state.owned) {
+    for (const key of this.state.laneKeys) {
       let lane = this.lanes.get(key);
       if (!lane) {
         lane = new Lane(this.scene, this.state, this, key);

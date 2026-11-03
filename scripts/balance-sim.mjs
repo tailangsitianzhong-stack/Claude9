@@ -19,7 +19,7 @@ function income(s) {
 }
 
 function laneRestCost(s, key, extraAfter) {
-  const extra = extraAfter ?? s.owned.filter((k) => k !== 'home:2' && s.isLaneActive(k)).length;
+  const extra = extraAfter ?? s.laneKeys.filter((k) => k !== 'home:2' && s.isLaneActive(k)).length;
   let c = 0;
   for (let i = s.laneStage(key); i < LANE_STEPS.length; i++) c += LANE_STEPS[i].cost * Math.pow(LANE_COST_GROWTH, extra);
   return c;
@@ -38,7 +38,7 @@ function candidates(s) {
     if (s.isMaxed(id)) continue;
     consider(s.upgradeCost(id), () => s.upgrades[id]++, () => s.upgrades[id]--, () => s.buyUpgrade(id));
   }
-  for (const key of s.owned) {
+  for (const key of s.laneKeys) {
     if (s.isLaneActive(key)) continue;
     const prev = s.lanes[key];
     consider(laneRestCost(s, key), () => (s.lanes[key] = 3), () => (s.lanes[key] = prev), () => {
@@ -54,7 +54,7 @@ function candidates(s) {
       if (!bestLand || c < bestLand.c) bestLand = { lot, i, c };
     }
   }
-  if (bestLand && s.owned.every((k) => s.isLaneActive(k))) {
+  if (bestLand && s.laneKeys.every((k) => s.isLaneActive(k))) {
     const key = `${bestLand.lot.id}:${bestLand.i}`;
     const total = bestLand.c + laneRestCost(s, key);
     consider(

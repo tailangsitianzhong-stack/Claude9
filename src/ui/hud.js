@@ -1,6 +1,7 @@
 import { UPGRADES, COMPANY_NAME, LOTS, LAND } from '../config.js';
 import { PRODUCTS, MAX_LEVEL } from '../data/products.js';
 import { formatYen, formatNum, bundlesPerMinPerLane } from '../economy.js';
+import { laneLabel } from '../scene/factory.js';
 
 const yen = formatYen;
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -347,7 +348,7 @@ export class Hud {
     const s = this.state;
     const per = bundlesPerMinPerLane(s);
     const m = new Map();
-    for (const k of s.owned) if (s.isLaneActive(k)) m.set(s.productOf(k).id, (m.get(s.productOf(k).id) ?? 0) + per);
+    for (const k of s.laneKeys) if (s.isLaneActive(k)) m.set(s.productOf(k).id, (m.get(s.productOf(k).id) ?? 0) + per);
     return m;
   }
 
@@ -384,7 +385,7 @@ export class Hud {
     this.el.sheet.innerHTML = `
       <div class="sheet-head">
         <div>
-          <div class="sheet-kind">${esc(LOTS.find((l) => l.id === key.split(':')[0])?.short ?? '')}・${Number(key.split(':')[1]) + 1}番ライン</div>
+          <div class="sheet-kind">${esc(laneLabel(key))}</div>
           <div class="sheet-title">作る製品を選ぶ</div>
           <div class="sheet-town">需要（取引先×10束/分）を超えて作ると、超えた分だけ値崩れします</div>
         </div>

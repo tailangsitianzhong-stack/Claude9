@@ -9,7 +9,7 @@ import {
   createBundler,
   createDock,
 } from '../scene/models.js';
-import { LAYOUT, lotById, parseKey, sectionCenter } from '../scene/factory.js';
+import { LAYOUT, lotById, laneCenter } from '../scene/factory.js';
 
 // 1区画ぶんの生産ライン： 押出機 → 冷却槽 → カッター → ベルトA → 結束機 → ベルトB → パレット
 // 機械は段階的に設置され、3段階（押出機・カッター・結束機）そろうと稼働する。
@@ -40,10 +40,8 @@ export class Lane {
     this.state = state;
     this.plant = plant;
     this.key = key;
-    const { lotId, index } = parseKey(key);
-    this.lot = lotById(lotId);
-    this.index = index;
-    const c = sectionCenter(this.lot, index);
+    this.lot = lotById(key.split(':')[0]);
+    const c = laneCenter(key);
     this.x = c.x;
     this.z0 = c.z;
     // この区画用にずらしたレイアウト（z の値だけ区画の中心からの位置にする）

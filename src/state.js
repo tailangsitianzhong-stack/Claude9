@@ -1,4 +1,4 @@
-import { CONFIG, UPGRADES, EMPLOYEES, LAND, LOTS, LANE_STEPS, LANE_COST_GROWTH, STRAW_COLORS } from './config.js';
+import { CONFIG, UPGRADES, EMPLOYEES, LAND, LOTS, LANE_STEPS, LANE_COST_GROWTH, STRAW_COLORS, EXTRA_SLOTS } from './config.js';
 import { PRODUCTS, MATERIAL_RATIO } from './data/products.js';
 import { levelFromXp, levelProgress, incomeModel, autoAssign, saturationFactor, unlockedProducts } from './economy.js';
 
@@ -133,6 +133,13 @@ export class GameState {
   }
 
   // --- 機械の設置（ライン増設）---
+  // ラインを置ける場所：持っている区画＋使える追加スペース
+  get laneKeys() {
+    return [...this.owned, ...EXTRA_SLOTS.filter((e) => this.owns(e.host)).map((e) => e.key)];
+  }
+  hasLane(key) {
+    return this.owns(key) || EXTRA_SLOTS.some((e) => e.key === key && this.owns(e.host));
+  }
   laneStage(key) {
     return this.lanes[key] ?? 0;
   }
@@ -140,16 +147,16 @@ export class GameState {
     return this.laneStage(key) >= LANE_STEPS.length;
   }
   get activeLaneCount() {
-    return this.owned.filter((k) => this.isLaneActive(k)).length;
+    return this.laneKeys.filter((k) => this.isLaneActive(k)).length;
   }
   nextLaneStep(key) {
-    if (!this.owns(key)) return null;
+    if (!this.hasLane(key)) return null;
     return LANE_STEPS[this.laneStage(key)] ?? null;
   }
   laneStepCost(key) {
     const step = this.nextLaneStep(key);
     if (!step) return Infinity;
-    const extra = this.owned.filter((k) => k !== HOME_KEY && this.isLaneActive(k)).length;
+    const extra = this.laneKeys.filter((k) => k !== HOME_KEY && this.isLaneActive(k)).length;
     return Math.round(step.cost * Math.pow(LANE_COST_GROWTH, extra));
   }
   buildLaneStep(key) {
@@ -181,7 +188,7 @@ export class GameState {
   }
   setLaneProduct(key, pid) {
     const p = PRODUCTS[pid];
-    if (!p || p.unlock > this.level || !this.owns(key)) return false;
+    if (!p || p.unlock > this.level || !this.hasLane(key)) return false;
     this.laneProducts[key] = pid;
     this.defaultProduct = pid;
     this.emit('products', key);
@@ -197,12 +204,12 @@ export class GameState {
   }
   resolvedAssignment() {
     const a = {};
-    for (const k of this.owned) a[k] = this.productOf(k).id;
+    for (const k of this.laneKeys) a[k] = this.productOf(k).id;
     return a;
   }
   // いま作っている製品の取引先の合計
   get totalBuyers() {
-    const ids = new Set(this.owned.filter((k) => this.isLaneActive(k)).map((k) => this.productOf(k).id));
+    const ids = new Set(this.laneKeys.filter((k) => this.isLaneActive(k)).map((k) => this.productOf(k).id));
     let n = 0;
     for (const id of ids) n += PRODUCTS[id].buyers;
     return n;
@@ -340,7 +347,7 @@ export class GameState {
         valid.add(HOME_KEY);
         s.owned = [...valid];
         s.lanes = {};
-        for (const k of s.owned) s.lanes[k] = Math.min(Math.max(0, lanes[k] | 0), LANE_STEPS.length);
+        for (const k of s.laneKeys) s.lanes[k] = Math.min(Math.max(0, lanes[k] | 0), LANE_STEPS.length);
         s.lanes[HOME_KEY] = LANE_STEPS.length;
       }
       // 製品（v3 以前はすべてストレートストロー）
@@ -348,7 +355,7 @@ export class GameState {
       const okProduct = (pid) => Number.isInteger(pid) && PRODUCTS[pid] && PRODUCTS[pid].unlock <= lvl;
       if (okProduct(d.defaultProduct)) s.defaultProduct = d.defaultProduct;
       s.laneProducts = {};
-      for (const k of s.owned) {
+      for (const k of s.laneKeys) {
         const pid = d.laneProducts?.[k];
         if (okProduct(pid)) s.laneProducts[k] = pid;
       }

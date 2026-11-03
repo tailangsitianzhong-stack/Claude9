@@ -173,4 +173,8 @@ export const LANE_STEPS = [
   { key: 'cutter', name: 'カッター', icon: '✂️', cost: 600 },
   { key: 'bundler', name: '結束機', icon: '🎀', cost: 1000 },
 ];
+// 区画の中の追加スペース：土地とは別に、機械を置いてラインを増やせる場所。
+// host の区画を持っていると使える。本社は最初から、ラインの右側の空きスペースに1本置ける。
+export const EXTRA_SLOTS = [{ key: 'home:2+', host: 'home:2', x: 2.9, z: 0, name: '横の空きスペース' }];
+
 export const LANE_COST_GROWTH = 1.8; // 増設ラインが増えるたびに機械の値段が上がる

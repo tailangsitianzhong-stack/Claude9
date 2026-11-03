@@ -67,7 +67,7 @@ export function saturationFactor(sold, demand) {
 export function incomeModel(s, assignment = s.laneProducts) {
   const per = bundlesPerMinPerLane(s);
   const prod = new Map();
-  for (const key of s.owned) {
+  for (const key of s.laneKeys) {
     if (!s.isLaneActive(key)) continue;
     const pid = assignment[key] ?? 0;
     prod.set(pid, (prod.get(pid) ?? 0) + per);
@@ -93,7 +93,7 @@ export function autoAssign(s, level = s.level) {
   const per = bundlesPerMinPerLane(s);
   const rate = new Map();
   const result = {};
-  const keys = s.owned.filter((k) => s.isLaneActive(k));
+  const keys = s.laneKeys.filter((k) => s.isLaneActive(k));
   for (const key of keys) {
     let best = options[0];
     let bestGain = -1;
