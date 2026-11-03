@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-// 工場全体（幅 x ≒ 10、奥行 z ≒ 20）が縦画面に収まるようにカメラ距離を決める
-const VIEW = { width: 10.5, depth: 19.5, polar: 0.78, azimuth: 0.42 };
+// 見せたい範囲（x は所有地に合わせて setFrame で変わる）が HUD の隙間に収まるようにカメラ距離を決める
+const VIEW = { minX: -5.25, maxX: 5.25, minZ: -8.6, maxZ: 10.9, polar: 0.78, azimuth: 0.42 };
 const TARGET = new THREE.Vector3(0, 0, 1.2);
 const BOUNDS = { minX: -6, maxX: 6, minZ: -9, maxZ: 11 };
 
@@ -23,10 +23,10 @@ export function createStage(container) {
   const sun = new THREE.DirectionalLight(0xfff4e0, 2.4);
   sun.position.set(7, 16, 5);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.mapSize.set(2048, 2048);
   const sc = sun.shadow.camera;
-  sc.left = -11;
-  sc.right = 11;
+  sc.left = -17;
+  sc.right = 17;
   sc.top = 13;
   sc.bottom = -13;
   sc.near = 1;
@@ -48,26 +48,35 @@ export function createStage(container) {
   // HUD に隠れない範囲（上端・下端の px）。main から setSafeArea で渡す
   const safe = { top: 0, bottom: 0 };
 
-  function fitDistance() {
-    const h = renderer.domElement.clientHeight || window.innerHeight;
-    const w = renderer.domElement.clientWidth || window.innerWidth;
-    const usable = Math.max(0.3, (h - safe.top - safe.bottom) / h);
-    const vfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * usable);
-    const aspect = w / (h * usable);
-    const hfov = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
-    // 斜め上から見ると奥行きは cos(polar) 程度に縮んで見える
-    const projectedDepth = VIEW.depth * Math.cos(VIEW.polar) + 2.5 * Math.sin(VIEW.polar);
-    const dDepth = projectedDepth / 2 / Math.tan(vfov / 2);
-    const dWidth = VIEW.width / 2 / Math.tan(hfov / 2);
-    return Math.max(dDepth, dWidth) * 1.02;
-  }
-
+  // 見せたい箱の角をすべて画面（HUD の隙間）に入れられる最短距離を二分探索で求める
+  const _v = new THREE.Vector3();
+  const _dir = new THREE.Vector3();
   function resetView() {
-    const d = fitDistance();
-    const off = new THREE.Vector3().setFromSphericalCoords(d, VIEW.polar, VIEW.azimuth);
+    const h = renderer.domElement.clientHeight || window.innerHeight;
+    const yTop = 1 - (2 * safe.top) / h - 0.02;
+    const yBottom = -1 + (2 * safe.bottom) / h + 0.02;
+    const pts = [];
+    for (const x of [VIEW.minX, VIEW.maxX]) for (const z of [VIEW.minZ, VIEW.maxZ]) for (const y of [0, 1.6]) pts.push(new THREE.Vector3(x, y, z));
     controls.target.copy(TARGET);
-    camera.position.copy(TARGET).add(off);
-    controls.maxDistance = Math.max(45, d * 1.4);
+    _dir.setFromSphericalCoords(1, VIEW.polar, VIEW.azimuth);
+    const fits = (d) => {
+      camera.position.copy(TARGET).addScaledVector(_dir, d);
+      camera.lookAt(TARGET);
+      camera.updateMatrixWorld();
+      return pts.every((p) => {
+        _v.copy(p).project(camera);
+        return _v.z < 1 && Math.abs(_v.x) <= 0.97 && _v.y <= yTop && _v.y >= yBottom;
+      });
+    };
+    let lo = 4;
+    let hi = 150;
+    for (let i = 0; i < 26; i++) {
+      const mid = (lo + hi) / 2;
+      if (fits(mid)) hi = mid;
+      else lo = mid;
+    }
+    camera.position.copy(TARGET).addScaledVector(_dir, hi);
+    controls.maxDistance = Math.max(45, hi * 1.4);
     controls.update();
   }
 
@@ -110,5 +119,15 @@ export function createStage(container) {
     }
   }
 
-  return { renderer, scene, camera, controls, resetView, clampTarget, setSafeArea };
+  // 所有地の幅に合わせて見る範囲を変える（隣の空き地のボタンも少し見えるように）
+  function setFrame(minX, maxX, reset = true) {
+    VIEW.minX = minX - 0.85;
+    VIEW.maxX = maxX + 0.85;
+    TARGET.x = (minX + maxX) / 2;
+    BOUNDS.minX = minX - 4;
+    BOUNDS.maxX = maxX + 4;
+    if (reset) resetView();
+  }
+
+  return { renderer, scene, camera, controls, resetView, clampTarget, setSafeArea, setFrame };
 }

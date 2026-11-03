@@ -252,36 +252,50 @@ function makeSignTexture(text) {
   return t;
 }
 
-export function createBuilding(companyName) {
+// 建屋（床・壁・ゲート・看板）。所有地の範囲 [minX, maxX] に合わせて作り直す。
+export function createShell(companyName, minX, maxX, plotEdges) {
   const g = new THREE.Group();
-  const W = 8.8;
+  const W = maxX - minX;
+  const cx = (minX + maxX) / 2;
   const D = 16.8;
-  const floor = mesh(new THREE.BoxGeometry(W - 0.2, 0.1, D - 0.2), MAT.floor, 0, -0.05, 0, false);
-  g.add(floor);
-  // 通路ライン
-  for (const x of [-2.1, 2.1]) g.add(box(0.06, 0.012, D - 1.2, MAT.yellow, x, 0.006, 0));
+  g.add(mesh(new THREE.BoxGeometry(W - 0.2, 0.1, D - 0.2), MAT.floor, cx, -0.05, 0, false));
+  // 各区画の通路ライン
+  for (const [a, b] of plotEdges) {
+    const lx = (a + b) / 2;
+    const half = Math.min(2.1, (b - a) / 2 - 0.35);
+    for (const s of [-1, 1]) g.add(box(0.06, 0.012, D - 1.2, MAT.yellow, lx + s * half, 0.006, 0));
+  }
+  // 区画の継ぎ目（増築したことが分かるように）
+  for (const [a] of plotEdges.slice(1)) g.add(box(0.08, 0.014, D - 0.4, MAT.bodyDark, a, 0.007, 0));
   // 壁（中が見えるよう低めの断面表示）
-  g.add(box(W, 1.6, 0.2, MAT.wall, 0, 0.8, -D / 2));
-  for (const s of [-1, 1]) g.add(box(0.2, 0.8, D, MAT.wall, s * (W / 2), 0.4, 0));
+  g.add(box(W, 1.6, 0.2, MAT.wall, cx, 0.8, -D / 2));
+  g.add(box(0.2, 0.8, D, MAT.wall, minX, 0.4, 0));
+  g.add(box(0.2, 0.8, D, MAT.wall, maxX, 0.4, 0));
   const door = 2.8;
-  const seg = (W - door) / 2;
-  for (const s of [-1, 1]) g.add(box(seg, 0.8, 0.2, MAT.wall, s * (door / 2 + seg / 2), 0.4, D / 2));
-  // 搬出口ゲート
+  const leftW = -door / 2 - minX;
+  const rightW = maxX - door / 2;
+  g.add(box(leftW, 0.8, 0.2, MAT.wall, minX + leftW / 2, 0.4, D / 2));
+  g.add(box(rightW, 0.8, 0.2, MAT.wall, door / 2 + rightW / 2, 0.4, D / 2));
+  // 搬出口ゲート（トラックは中央に着く）
   for (const s of [-1, 1]) g.add(box(0.18, 2.1, 0.24, MAT.orange, s * (door / 2), 1.05, D / 2));
   g.add(box(door + 0.18, 0.2, 0.24, MAT.orange, 0, 2.1, D / 2));
-  // 柱
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) g.add(box(0.35, 2.4, 0.35, MAT.bodyDark, sx * (W / 2), 1.2, sz * (D / 2)));
-  // 看板
-  const sign = mesh(new THREE.PlaneGeometry(4.2, 0.8), new THREE.MeshBasicMaterial({ map: makeSignTexture(companyName) }), 0, 2.15, -D / 2 + 0.11, false);
-  g.add(sign);
+  // 柱（区画の境目ごと）
+  const xs = [minX, ...plotEdges.slice(1).map(([a]) => a), maxX];
+  for (const x of xs) for (const sz of [-1, 1]) g.add(box(0.35, 2.4, 0.35, MAT.bodyDark, x, 1.2, sz * (D / 2)));
+  // 看板（中央の区画の奥）
+  g.add(mesh(new THREE.PlaneGeometry(4.2, 0.8), new THREE.MeshBasicMaterial({ map: makeSignTexture(companyName) }), 0, 2.15, -D / 2 + 0.11, false));
   g.add(box(4.4, 1.0, 0.1, MAT.bodyDark, 0, 2.15, -D / 2 + 0.03));
   for (const s of [-1, 1]) g.add(box(0.1, 0.8, 0.1, MAT.bodyDark, s * 1.8, 1.4, -D / 2));
+  return g;
+}
 
-  // 地面と道路
-  const ground = mesh(new THREE.PlaneGeometry(160, 160), std(0x9fd18a, { roughness: 1 }), 0, -0.11, 0, false);
+// 地面・道路・木（拡張しても変わらない部分）
+export function createEnvironment() {
+  const g = new THREE.Group();
+  const ground = mesh(new THREE.PlaneGeometry(200, 200), std(0x9fd18a, { roughness: 1 }), 0, -0.11, 0, false);
   ground.rotation.x = -Math.PI / 2;
   g.add(ground);
-  const road = mesh(new THREE.PlaneGeometry(160, 2.8), std(0x555b63, { roughness: 1 }), 0, -0.1, 9.7, false);
+  const road = mesh(new THREE.PlaneGeometry(200, 2.8), std(0x555b63, { roughness: 1 }), 0, -0.1, 9.7, false);
   road.rotation.x = -Math.PI / 2;
   g.add(road);
   for (let x = -60; x <= 60; x += 3) {
@@ -289,12 +303,20 @@ export function createBuilding(companyName) {
     dash.rotation.x = -Math.PI / 2;
     g.add(dash);
   }
-  // 木（雰囲気）
+  // 木は拡張予定地（|x| < 15）と重ならない場所に置く
   const leaf = std(0x5fae5a);
   const trunk = std(0x8a5a3b);
-  for (const [x, z] of [[-7, -6], [-6.5, 2], [7.2, -4], [6.8, 4], [-7.5, 12.8], [5.5, 12.6], [-2, 13.2]]) {
+  const trees = [[-17.5, -6], [-17, 3], [17.8, -4], [17.2, 5], [-9, -11.6], [6.5, -11.4], [-1.5, -12.2], [-7.5, 12.9], [5.5, 12.7], [-2, 13.3], [12, 13]];
+  for (const [x, z] of trees) {
     g.add(mesh(new THREE.CylinderGeometry(0.12, 0.15, 0.8, 6), trunk, x, 0.3, z));
     g.add(mesh(new THREE.ConeGeometry(0.7, 1.6, 7), leaf, x, 1.4, z));
   }
   return g;
+}
+
+export function disposeTree(obj) {
+  obj.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material?.map) o.material.map.dispose();
+  });
 }

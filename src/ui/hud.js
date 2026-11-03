@@ -97,27 +97,27 @@ export class Hud {
 
   update() {
     const s = this.state;
-    const { truck, production } = this.game;
+    const { truck, plant } = this.game;
     this.el.money.textContent = yen(s.money);
     const exp = s.expectedPerMinute();
     this.el.rate.textContent = `見込み +${yen(exp.value)}/分`;
 
-    this.el.prod.textContent = `⚙️ 1束/${s.bundleInterval.toFixed(1)}秒`;
+    this.el.prod.textContent = `⚙️ ${s.activeLaneCount}ライン・${s.bundleInterval.toFixed(1)}秒`;
     const full = s.stock.length >= s.dockCapacity;
-    this.el.stock.textContent = `📦 在庫 ${s.stock.length}/${s.dockCapacity}束`;
+    this.el.stock.textContent = `📦 ${s.stock.length}/${s.dockCapacity}束`;
     this.el.stock.classList.toggle('bad', full);
-    this.el.prod.classList.toggle('bad', production.blockedReason === 'dockFull');
+    this.el.prod.classList.toggle('bad', plant.blockedReason === 'dockFull');
 
     let truckText;
     switch (truck.mode) {
       case 'docked': {
         const sec = truck.secondsToDepart;
-        truckText = sec == null ? '🚚 待機中' : `🚚 ${Math.ceil(sec)}秒後に発車`;
+        truckText = sec == null ? '🚚 待機中' : `🚚 発車まで${Math.ceil(sec)}秒`;
         break;
       }
       case 'leaving':
       case 'away':
-        truckText = `🚚 ${truck.buyer?.name ?? ''}へ配送中`;
+        truckText = '🚚 配送中';
         break;
       default:
         truckText = '🚚 帰り道';
@@ -160,7 +160,7 @@ export class Hud {
     t.className = 'toast';
     t.innerHTML = html;
     this.el.toasts.prepend(t);
-    while (this.el.toasts.children.length > 3) this.el.toasts.lastChild.remove();
+    while (this.el.toasts.children.length > 2) this.el.toasts.lastChild.remove();
     setTimeout(() => t.classList.add('out'), 2600);
     setTimeout(() => t.remove(), 3100);
   }
@@ -177,11 +177,15 @@ export class Hud {
 
   renderInfoStatus() {
     const key = this.infoTarget.userData.key;
-    const st = this.game.production.status[key];
+    const lane = this.infoTarget.userData.lane;
+    const st = lane?.active ? lane.status[key] : null;
     const el = this.el.infoStatus;
     if (st) {
       el.textContent = STATUS_LABEL[st] + (st === 'blocked' ? '（倉庫が満杯／出荷待ち）' : '');
       el.className = 'info-status ' + st;
+    } else if (lane && !lane.active) {
+      el.textContent = '準備中（機械がそろうと動き出します）';
+      el.className = 'info-status idle';
     } else if (key === 'dock') {
       el.textContent = `在庫 ${this.state.stock.length}/${this.state.dockCapacity}束`;
       el.className = 'info-status';

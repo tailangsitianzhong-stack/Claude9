@@ -85,3 +85,20 @@ export const BUYERS = [
   { id: 'sora', name: 'カフェ・ソラ', priceMul: 1.15 },
   { id: 'hanamaru', name: 'はなまるスーパー', priceMul: 0.95 },
 ];
+
+// ---- 工場の拡張 ----
+// 土地：中央の区画(0)から左右に広げる。区画番号 -2..2
+export const LAND = {
+  minPlot: -2,
+  maxPlot: 2,
+  // 何区画目を買うかで値段が決まる（1区画目, 2区画目, ...）
+  costs: [2000, 6000, 15000, 40000],
+};
+
+// 機械：買った区画に順番に置く。3つそろうと新しいラインが動き出す
+export const LANE_STEPS = [
+  { key: 'extruder', name: '押出機', icon: '🏭', cost: 800 },
+  { key: 'cutter', name: 'カッター', icon: '✂️', cost: 600 },
+  { key: 'bundler', name: '結束機', icon: '🎀', cost: 1000 },
+];
+export const LANE_COST_GROWTH = 1.8; // 増設ラインが増えるたびに機械の値段が上がる

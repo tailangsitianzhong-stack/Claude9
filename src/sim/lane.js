@@ -1,9 +1,18 @@
 import * as THREE from 'three';
 import { CONFIG, STRAW_COLORS } from '../config.js';
-import { setLamp } from '../scene/models.js';
-import { LAYOUT } from '../scene/factory.js';
+import {
+  setLamp,
+  createExtruder,
+  createCoolingBath,
+  createCutter,
+  createConveyor,
+  createBundler,
+  createDock,
+} from '../scene/models.js';
+import { LAYOUT, laneX } from '../scene/factory.js';
 
-// 生産ライン： 押出機 → 冷却槽 → カッター → ベルトA → 結束機 → ベルトB → 倉庫
+// 1区画ぶんの生産ライン： 押出機 → 冷却槽 → カッター → ベルトA → 結束機 → ベルトB → パレット
+// 機械は段階的に設置され、3段階（押出機・カッター・結束機）そろうと稼働する。
 // 見た目の移動とシミュレーションが一致する（ストローが実際に流れて束になる）。
 
 const STRAW_LEN = 0.9;
@@ -18,16 +27,18 @@ const CLUSTER = {
   5: [[0, 0], ...[0, 1, 2, 3].map((i) => [Math.cos((i * Math.PI) / 2 + Math.PI / 4) * 0.058, Math.sin((i * Math.PI) / 2 + Math.PI / 4) * 0.058])],
 };
 
-// 倉庫の山（インスタンス描画で軽く）
-const PILE_MAX = 60;
-const pileGeo = new THREE.CylinderGeometry(0.085, 0.085, STRAW_LEN, 10).rotateZ(Math.PI / 2);
-const pileMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
+const POP_TIME = 0.45;
 
-export class ProductionLine {
-  constructor(scene, state, machines) {
+export class Lane {
+  constructor(scene, state, plant, plot) {
     this.scene = scene;
     this.state = state;
-    this.m = machines;
+    this.plant = plant;
+    this.plot = plot;
+    this.x = laneX(plot);
+    this.stage = 0;
+    this.m = {};
+    this.pops = []; // 設置アニメーション
 
     this.pool = [];
     this.straws = []; // ベルトA上のストロー
@@ -42,24 +53,56 @@ export class ProductionLine {
     this.status = { extruder: 'idle', cutter: 'idle', bundler: 'idle' };
     this.blockedReason = null;
 
-    const len = LAYOUT.cutterZ - LAYOUT.extruderOutZ;
     this.tubeMat = new THREE.MeshStandardMaterial({ color: STRAW_COLORS[this.colorCursor], roughness: 0.4 });
-    this.tube = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.034, len, 8).rotateX(Math.PI / 2), this.tubeMat);
-    this.tube.position.set(0, LAYOUT.tubeY, (LAYOUT.cutterZ + LAYOUT.extruderOutZ) / 2);
-    this.tube.castShadow = true;
-    scene.add(this.tube);
+  }
 
-    this.pile = new THREE.InstancedMesh(pileGeo, pileMat, PILE_MAX);
-    this.pile.castShadow = true;
-    this.pile.receiveShadow = true;
-    const white = new THREE.Color(0xffffff);
-    for (let i = 0; i < PILE_MAX; i++) this.pile.setColorAt(i, white);
-    this.pile.count = 0;
-    scene.add(this.pile);
-    this._tmp = new THREE.Object3D();
-    this._col = new THREE.Color();
-    state.on('stock', () => this.refreshPile());
-    this.refreshPile();
+  get active() {
+    return this.stage >= 3;
+  }
+
+  get machines() {
+    return Object.values(this.m);
+  }
+
+  // 置いた機械の数まで建てる（ロード時は一気に、購入時は1段階ずつ）
+  setStage(stage, animate = false) {
+    while (this.stage < stage) {
+      this.stage++;
+      this.buildStep(this.stage, animate);
+    }
+  }
+
+  place(key, obj, z, animate) {
+    obj.position.set(this.x, 0, z);
+    obj.userData.lane = this;
+    this.scene.add(obj);
+    this.m[key] = obj;
+    if (animate) {
+      obj.scale.setScalar(0.01);
+      this.pops.push({ obj, t: 0 });
+    }
+  }
+
+  buildStep(step, animate) {
+    if (step === 1) {
+      this.place('extruder', createExtruder(), LAYOUT.extruderZ, animate);
+      this.place('bath', createCoolingBath(2.0), LAYOUT.bathZ, animate);
+      this.m.extruder.userData.pelletMat.color.setHex(STRAW_COLORS[this.colorCursor]);
+    } else if (step === 2) {
+      this.place('cutter', createCutter(), LAYOUT.cutterZ, animate);
+      const lenA = LAYOUT.bundlerInZ - LAYOUT.cutterOutZ;
+      this.place('beltA', createConveyor(lenA), (LAYOUT.bundlerInZ + LAYOUT.cutterOutZ) / 2, animate);
+      const len = LAYOUT.cutterZ - LAYOUT.extruderOutZ;
+      this.tube = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.034, len, 8).rotateX(Math.PI / 2), this.tubeMat);
+      this.tube.position.set(this.x, LAYOUT.tubeY, (LAYOUT.cutterZ + LAYOUT.extruderOutZ) / 2);
+      this.tube.castShadow = true;
+      this.scene.add(this.tube);
+    } else if (step === 3) {
+      this.place('bundler', createBundler(), LAYOUT.bundlerZ, animate);
+      const lenB = LAYOUT.dockInZ - LAYOUT.bundlerOutZ;
+      this.place('beltB', createConveyor(lenB), (LAYOUT.dockInZ + LAYOUT.bundlerOutZ) / 2, animate);
+      this.place('dock', createDock(), LAYOUT.dockZ, animate);
+    }
   }
 
   get beltSpeed() {
@@ -91,7 +134,7 @@ export class ProductionLine {
     }
     this.current.cut++;
     const s = this.takeStraw(this.current.c);
-    s.position.set(0, LAYOUT.strawY, LAYOUT.cutterOutZ + this.beltSpeed * extraTime);
+    s.position.set(this.x, LAYOUT.strawY, LAYOUT.cutterOutZ + this.beltSpeed * extraTime);
     this.straws.push(s);
     this.bladeT = 0;
   }
@@ -113,24 +156,23 @@ export class ProductionLine {
     return g;
   }
 
-  refreshPile() {
-    const n = Math.min(this.state.stock.length, PILE_MAX);
-    for (let i = 0; i < n; i++) {
-      const layer = Math.floor(i / 12);
-      const within = i % 12;
-      const col = within % 6;
-      const side = Math.floor(within / 6);
-      this._tmp.position.set(side ? 0.47 : -0.47, 0.235 + layer * 0.17, LAYOUT.dockZ - 0.66 + col * 0.265);
-      this._tmp.updateMatrix();
-      this.pile.setMatrixAt(i, this._tmp.matrix);
-      this.pile.setColorAt(i, this._col.setHex(STRAW_COLORS[this.state.stock[i].c] ?? 0xffffff));
-    }
-    this.pile.count = n;
-    this.pile.instanceMatrix.needsUpdate = true;
-    if (this.pile.instanceColor) this.pile.instanceColor.needsUpdate = true;
-  }
-
   update(dt, time) {
+    for (let i = this.pops.length - 1; i >= 0; i--) {
+      const p = this.pops[i];
+      p.t += dt;
+      const k = Math.min(1, p.t / POP_TIME);
+      // easeOutBack：少し行き過ぎて戻る（ポンと置かれる感じ）
+      const c1 = 1.70158;
+      p.obj.scale.setScalar(Math.max(0.01, 1 + (c1 + 1) * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2)));
+      if (k >= 1) {
+        p.obj.scale.setScalar(1);
+        this.pops.splice(i, 1);
+      }
+    }
+    if (!this.active) {
+      for (const key of ['extruder', 'cutter', 'bundler']) if (this.m[key]) setLamp(this.m[key].userData.lamp, 'idle');
+      return;
+    }
     const interval = this.state.bundleInterval;
     const strawInterval = interval / CONFIG.avgBundleSize;
     const speed = this.beltSpeed;
@@ -157,7 +199,7 @@ export class ProductionLine {
     }
 
     // --- 結束機 ---
-    const canEmit = this.state.stock.length + this.bundles.length < this.state.dockCapacity;
+    const canEmit = this.state.stock.length + this.plant.inTransit() < this.state.dockCapacity;
     let bundlerBlocked = false;
     const head = this.m.bundler.userData.head;
     if (this.bind) {
@@ -166,7 +208,7 @@ export class ProductionLine {
       head.position.y = 1.4 - 0.32 * Math.sin(Math.PI * p);
       if (p >= 1) {
         const mesh = this.makeBundleMesh(this.bind.group);
-        mesh.position.set(0, LAYOUT.strawY + 0.06, LAYOUT.bundlerOutZ);
+        mesh.position.set(this.x, LAYOUT.strawY + 0.06, LAYOUT.bundlerOutZ);
         this.scene.add(mesh);
         this.bundles.push({ mesh, group: this.bind.group });
         this.bind = null;
@@ -203,7 +245,7 @@ export class ProductionLine {
     const beltShift = (speed * dt) / 0.5;
     this.m.beltA.userData.texture.offset.y += beltShift;
     this.m.beltB.userData.texture.offset.y += beltShift;
-    if (!cutterBlocked) this.m.extruder.position.x = Math.sin(time * 60) * 0.004;
+    if (!cutterBlocked) this.m.extruder.position.x = this.x + Math.sin(time * 60) * 0.004;
 
     // --- 状態ランプ ---
     const lineState = cutterBlocked ? 'blocked' : 'running';

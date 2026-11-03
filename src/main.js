@@ -1,37 +1,64 @@
 import * as THREE from 'three';
-import { COMPANY_NAME } from './config.js';
 import { GameState } from './state.js';
 import { createStage } from './scene/setup.js';
 import { buildFactory } from './scene/factory.js';
-import { ProductionLine } from './sim/production.js';
+import { BuildButtons } from './scene/buttons.js';
+import { Plant } from './sim/plant.js';
 import { Truck } from './sim/truck.js';
 import { Workers } from './sim/workers.js';
 import { Hud } from './ui/hud.js';
 
+const yen = (n) => '¥' + Math.floor(n).toLocaleString('ja-JP');
+
 const state = GameState.load();
 const stage = createStage(document.getElementById('app'));
-const { machines, selectable } = buildFactory(stage.scene, COMPANY_NAME);
+const { truck: truckMesh } = buildFactory(stage.scene);
 
-const production = new ProductionLine(stage.scene, state, machines);
-const truck = new Truck(state, machines.truck);
+const plant = new Plant(stage.scene, state);
+const truck = new Truck(state, truckMesh);
 const workers = new Workers(stage.scene, state);
+const buttons = new BuildButtons(stage.scene, state);
 
-const game = { state, production, truck, workers, stage };
+const game = { state, plant, truck, workers, buttons, stage };
 const hud = new Hud(document.getElementById('hud'), game);
 
-// ---- HUD に隠れない範囲にカメラを合わせる ----
+// ---- カメラ：HUD に隠れない範囲に、所有地全体が入るように ----
+function frameLand(reset = true) {
+  const { minX, maxX } = plant.bounds;
+  stage.setFrame(minX, maxX, reset);
+}
 function fitToHud() {
   const top = document.querySelector('#hud .chips').getBoundingClientRect().bottom;
   const bottom = window.innerHeight - document.querySelector('#hud .panel').getBoundingClientRect().top;
+  frameLand(false);
   stage.setSafeArea(top, bottom);
 }
 fitToHud();
 window.addEventListener('resize', fitToHud);
+state.on('land', () => frameLand(true));
 
-// ---- タップで機械の情報 ----
+// ---- 地面のボタンで購入 ----
+function onButton(action) {
+  if (action.type === 'land') {
+    const r = state.buyLand(action.plot);
+    if (r.ok) hud.toast(`<b>土地を購入</b> 工場が広がりました（${yen(r.cost)}）`);
+    else if (r.reason === 'money') hud.toast(`お金が足りません（あと${yen(r.short)}）`);
+  } else if (action.type === 'lane') {
+    const r = state.buildLaneStep(action.plot);
+    if (r.ok) {
+      hud.toast(
+        r.completed
+          ? `<b>新しいラインが稼働！</b> ${r.step.name}を設置しました`
+          : `<b>${r.step.name}を設置</b>（${yen(r.cost)}）`,
+      );
+    } else if (r.reason === 'money') hud.toast(`お金が足りません（あと${yen(r.short)}）`);
+  }
+  hud.update();
+}
+
+// ---- タップ判定（ボタン → 機械・作業員の順）----
 const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
-const pickables = [...selectable, ...workers.meshes];
 let down = null;
 const canvas = stage.renderer.domElement;
 canvas.addEventListener('pointerdown', (e) => {
@@ -46,6 +73,14 @@ canvas.addEventListener('pointerup', (e) => {
   const rect = canvas.getBoundingClientRect();
   ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
   raycaster.setFromCamera(ndc, stage.camera);
+
+  const btnHit = raycaster.intersectObjects(buttons.pickables, false)[0];
+  if (btnHit) {
+    hud.hideInfo();
+    onButton(btnHit.object.userData.button.action);
+    return;
+  }
+  const pickables = [...plant.pickables(), truckMesh, ...workers.meshes];
   const hit = raycaster.intersectObjects(pickables, true)[0];
   let obj = hit?.object;
   while (obj && !obj.userData.info) obj = obj.parent;
@@ -78,9 +113,10 @@ let acc = 0;
 let hudTimer = 0;
 function step(dt) {
   time += dt;
-  production.update(dt, time);
+  plant.update(dt, time);
   truck.update(dt);
   workers.update(dt);
+  buttons.update(dt);
 }
 game.step = step;
 stage.renderer.setAnimationLoop(() => {
@@ -96,6 +132,7 @@ stage.renderer.setAnimationLoop(() => {
   if (hudTimer > 0.2) {
     hudTimer = 0;
     hud.update();
+    buttons.refresh();
   }
   stage.renderer.render(stage.scene, stage.camera);
 });
